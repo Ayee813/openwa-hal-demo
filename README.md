@@ -74,13 +74,16 @@ The CLI commands read the project ref, DB password and access token from
 
 Demo accounts. Sign in at http://localhost:3000/login.
 
-| Role | Branch | Email |
-|---|---|---|
-| admin | — | yongyeelove813@gmail.com |
-| branch | ນາຄ່ອນ (#410) | yongyeevuesengchan@gmail.com |
-| admin | — | admin@hal-demo.la |
-| branch | ນາຄ່ອນ (#410) | nakhon@hal-demo.la |
-| branch | ຕານມີໄຊ (#53) | tanmixay@hal-demo.la |
+| Role | Branch | Email | Password |
+|---|---|---|---|
+| admin | — | yongyeelove813@gmail.com | `12qwaszx` |
+| branch | ນາຄ່ອນ (#410) | yongyeevuesengchan@gmail.com | `12qwaszx` |
+| admin | — | admin@hal-demo.la | `HalAdmin#2026` |
+| branch | ນາຄ່ອນ (#410) | nakhon@hal-demo.la | `Branch#2026` |
+| branch | ຕານມີໄຊ (#53) | tanmixay@hal-demo.la | `Branch#2026` |
+
+> Demo-only passwords. Change them (re-run `pnpm create:admin` with a new
+> `ADMIN_PASSWORD`) before this app is reachable by anyone else.
 
 Create more, or reset a password (re-running is safe):
 
