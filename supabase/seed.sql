@@ -1,0 +1,2 @@
+-- Runs only on the local stack (`supabase start` / `supabase db reset`), never
+-- on the hosted project. Create the first hosted admin with `pnpm create:admin`.
