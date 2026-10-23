@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { WaBadge } from "@/components/badges";
@@ -106,6 +107,11 @@ export function WhatsAppPanel({ initialStatus }: { initialStatus: string }) {
       </div>
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-line px-5 py-3">
+        {connected && (
+          <Link href="/bills" className={`${btn.wa} mr-auto`}>
+            ໄປສົ່ງແຈ້ງບິນ →
+          </Link>
+        )}
         {state.status !== "not_connected" && (
           <button disabled={pending} onClick={logout} className={btn.outline}>
             ຕັດການເຊື່ອມ

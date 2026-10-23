@@ -21,6 +21,8 @@ import { billStatuses, sendBills, type BillFilter } from "../actions";
 import { DemoTools } from "./demo-tools";
 
 const kip = new Intl.NumberFormat("en-US");
+/** Bills per page; the page parses the same list. */
+const PER_PAGE = [10, 20, 50, 100];
 
 type Notice = { tone: "ok" | "error"; text: string } | null;
 type Pending = { kind: "selected" | "all" | "one"; bills: Bill[]; resend: boolean } | null;
@@ -71,6 +73,7 @@ export function BillsTable({
   const [busy, startTransition] = useTransition();
   const router = useRouter();
   const confirmRef = useRef<HTMLDialogElement>(null);
+  const connectRef = useRef<HTMLDialogElement>(null);
   const detailRef = useRef<HTMLDialogElement>(null);
   const wasSending = useRef(false);
 
@@ -122,9 +125,15 @@ export function BillsTable({
     return billMessage(template, b, branch);
   }
 
+  /** Confirms a send, or asks to connect WhatsApp first when it isn't. */
+  function ask(p: NonNullable<Pending>) {
+    if (branch.wa_ready) setConfirm(p);
+    else connectRef.current?.showModal();
+  }
+
   function sendOne(b: Bill) {
     const prev = statuses[b.billNumber];
-    setConfirm({
+    ask({
       kind: "one",
       bills: [b],
       resend: !!prev && (SENT.includes(prev.status) || prev.status === "no_whatsapp"),
@@ -139,7 +148,9 @@ export function BillsTable({
         resend: p.resend,
       });
       setConfirm(null);
-      if (res.error) {
+      if (res.needsWhatsApp) {
+        connectRef.current?.showModal();
+      } else if (res.error) {
         setNotice({ tone: "error", text: res.error });
       } else {
         const extra = [
@@ -158,15 +169,15 @@ export function BillsTable({
     });
   }
 
-  const href = (p: number, tab: SendState | null = send) => ({
+  const href = (p: number, tab: SendState | null = send, perPage = limit) => ({
     pathname: "/bills",
     query: {
       start: filter.startDate,
       end: filter.endDate,
       ...(filter.status ? {} : { status: "all" }),
       ...(q ? { q } : {}),
-      ...(tab ? { send: tab } : {}),
-      limit,
+      send: tab ?? "all",
+      limit: perPage,
       page: p,
     },
   });
@@ -206,7 +217,7 @@ export function BillsTable({
           <label className="flex flex-col gap-1 text-sm">
             ຕໍ່ໜ້າ:
             <select name="limit" defaultValue={limit} className={input}>
-              {[10, 20, 50].map((n) => (
+              {PER_PAGE.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
@@ -216,7 +227,7 @@ export function BillsTable({
           <button className="flex h-9 items-center justify-center gap-2 rounded bg-hal px-8 text-sm font-medium text-white hover:bg-hal-dark">
             <SearchIcon /> ຄົ້ນຫາ
           </button>
-          {send && <input type="hidden" name="send" value={send} />}
+          <input type="hidden" name="send" value={send ?? "all"} />
           <Link
             href="/bills"
             className="flex h-9 items-center justify-center gap-2 rounded border border-zinc-300 bg-white px-8 text-sm hover:border-hal hover:text-hal"
@@ -228,7 +239,8 @@ export function BillsTable({
 
       {/* ---------- Send-state tabs ---------- */}
       <nav aria-label="ສະຖານະການສົ່ງ" className="flex flex-wrap gap-2">
-        {[{ key: null, label: "ທັງໝົດ" }, ...SEND_STATES].map((t) => {
+        {/* The default tab first, "all" last. */}
+        {[...SEND_STATES, { key: null, label: "ທັງໝົດ" }].map((t) => {
           const n = t.key ? counts[t.key] : found;
           const on = send === t.key;
           return (
@@ -254,14 +266,14 @@ export function BillsTable({
       <div className="flex flex-wrap items-center gap-2">
         <button
           disabled={busy || chosen.length === 0}
-          onClick={() => setConfirm({ kind: "selected", bills: chosen, resend: false })}
+          onClick={() => ask({ kind: "selected", bills: chosen, resend: false })}
           className="flex h-9 items-center gap-2 rounded bg-wa px-4 text-sm font-medium text-white hover:brightness-95 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
         >
           <WaIcon className="size-4" /> ສົ່ງບິນທີ່ເລືອກ ({chosen.length})
         </button>
         <button
           disabled={busy || unsent === 0}
-          onClick={() => setConfirm({ kind: "all", bills: sendable, resend: false })}
+          onClick={() => ask({ kind: "all", bills: sendable, resend: false })}
           className="flex h-9 items-center gap-2 rounded border border-wa bg-white px-4 text-sm font-medium text-wa-text hover:bg-green-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
         >
           ສົ່ງທັງໝົດທີ່ຍັງບໍ່ສົ່ງ ({unsent})
@@ -273,12 +285,21 @@ export function BillsTable({
       </div>
 
       {!branch.wa_ready && (
-        <p className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">
-          WhatsApp ຂອງສາຂາຍັງບໍ່ໄດ້ເຊື່ອມ, ຍັງສົ່ງບິນບໍ່ໄດ້.
-          <Link href="/whatsapp" className="font-medium underline">
-            ເຊື່ອມ WhatsApp →
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700">
+            <WaIcon className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1 text-sm">
+            <p className="font-semibold text-amber-900">ຍັງບໍ່ໄດ້ເຊື່ອມ WhatsApp ຂອງສາຂາ</p>
+            <p className="text-amber-800">ເຊື່ອມກ່ອນ ຈຶ່ງສົ່ງແຈ້ງບິນຫາລູກຄ້າໄດ້. ໃຊ້ເວລາປະມານ 1 ນາທີ.</p>
+          </div>
+          <Link
+            href="/whatsapp"
+            className="flex h-9 items-center gap-2 rounded bg-wa px-4 text-sm font-medium text-white hover:brightness-95"
+          >
+            <WaIcon className="size-4" /> ເຊື່ອມ WhatsApp
           </Link>
-        </p>
+        </div>
       )}
 
       {notice && (
@@ -403,7 +424,33 @@ export function BillsTable({
           </p>
         ) : null}
 
-        {lastPage > 1 && <Pager page={page} lastPage={lastPage} href={href} />}
+        {total > 0 && (
+          <div className="flex flex-col gap-3 border-t border-line px-4 py-3 sm:flex-row sm:items-center">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-zinc-500">
+              <span className="tabular-nums">
+                ສະແດງ {(page - 1) * limit + 1}–{Math.min(page * limit, total)} ຈາກ {total} ບິນ
+              </span>
+              <span className="flex items-center gap-2">
+                ຕໍ່ໜ້າ:
+                <span className="inline-flex overflow-hidden rounded border border-zinc-300">
+                  {PER_PAGE.map((n) => (
+                    <Link
+                      key={n}
+                      href={href(1, send, n)}
+                      aria-current={n === limit ? "true" : undefined}
+                      className={`grid h-8 min-w-10 place-items-center border-l border-zinc-300 px-2 tabular-nums first:border-l-0 ${
+                        n === limit ? "bg-hal text-white" : "bg-white text-zinc-700 hover:bg-hal-soft hover:text-hal"
+                      }`}
+                    >
+                      {n}
+                    </Link>
+                  ))}
+                </span>
+              </span>
+            </div>
+            {lastPage > 1 && <Pager page={page} lastPage={lastPage} href={href} />}
+          </div>
+        )}
       </section>
 
       {/* ---------- Confirm send ---------- */}
@@ -434,11 +481,6 @@ export function BillsTable({
                 ບິນນີ້ສົ່ງແລ້ວ. ລູກຄ້າຈະໄດ້ຮັບຂໍ້ຄວາມຊ້ຳ.
               </p>
             )}
-            {!branch.wa_ready && (
-              <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                WhatsApp ຍັງບໍ່ໄດ້ເຊື່ອມ, ການສົ່ງຈະບໍ່ສຳເລັດ.
-              </p>
-            )}
             {confirm.bills[0] && (
               <>
                 <p className="text-xs text-zinc-500">
@@ -463,6 +505,34 @@ export function BillsTable({
             </div>
           </div>
         )}
+      </dialog>
+
+      {/* ---------- Connect WhatsApp first ---------- */}
+      <dialog ref={connectRef} className="m-auto w-[min(92vw,26rem)] rounded-lg p-0">
+        <div className="flex flex-col items-center gap-3 p-6 text-center">
+          <span className="grid size-14 place-items-center rounded-full bg-green-50 text-wa">
+            <WaIcon className="size-7" />
+          </span>
+          <h2 className="text-lg font-semibold">ເຊື່ອມ WhatsApp ກ່ອນສົ່ງບິນ</h2>
+          <p className="text-sm text-zinc-600">
+            ສາຂານີ້ຍັງບໍ່ໄດ້ເຊື່ອມ WhatsApp, ຈຶ່ງຍັງສົ່ງແຈ້ງບິນບໍ່ໄດ້. ສະແກນ QR ດ້ວຍໂທລະສັບຂອງສາຂາ
+            ແລ້ວກັບມາສົ່ງໄດ້ທັນທີ.
+          </p>
+          <div className="mt-2 flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-center">
+            <button
+              onClick={() => connectRef.current?.close()}
+              className="h-9 rounded border border-zinc-300 px-4 text-sm"
+            >
+              ໄວ້ທີຫຼັງ
+            </button>
+            <Link
+              href="/whatsapp"
+              className="flex h-9 items-center justify-center gap-2 rounded bg-wa px-4 text-sm font-medium text-white hover:brightness-95"
+            >
+              <WaIcon className="size-4" /> ໄປເຊື່ອມ WhatsApp
+            </Link>
+          </div>
+        </div>
       </dialog>
 
       {/* ---------- Bill detail ---------- */}
@@ -578,7 +648,7 @@ function Pager({
 
   const cls = "grid h-8 min-w-8 place-items-center rounded border px-2 text-sm";
   return (
-    <nav className="flex flex-wrap items-center justify-end gap-1.5 p-4">
+    <nav className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
       {page > 1 && <Link href={href(page - 1)} className={`${cls} border-zinc-300`}>‹</Link>}
       {pages.map((p, i) => (
         <span key={p} className="flex items-center gap-1.5">

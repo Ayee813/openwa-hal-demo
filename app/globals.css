@@ -27,6 +27,63 @@ body {
   font-family: var(--font-sans);
 }
 
+/* Dialogs fade and scale in, and fade out on close. */
+dialog {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out,
+    overlay 180ms allow-discrete,
+    display 180ms allow-discrete;
+}
+
+dialog[open] {
+  opacity: 1;
+  transform: none;
+}
+
+@starting-style {
+  dialog[open] {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
 dialog::backdrop {
+  background: rgb(0 0 0 / 0);
+  backdrop-filter: blur(0);
+  transition:
+    background 180ms ease-out,
+    backdrop-filter 180ms ease-out,
+    overlay 180ms allow-discrete,
+    display 180ms allow-discrete;
+}
+
+dialog[open]::backdrop {
   background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(2px);
+}
+
+@starting-style {
+  dialog[open]::backdrop {
+    background: rgb(0 0 0 / 0);
+    backdrop-filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog,
+  dialog::backdrop {
+    transition: none;
+  }
+}
+
+/* The page behind an open dialog doesn't scroll; the gutter stays so it doesn't jump. */
+html {
+  scrollbar-gutter: stable;
+}
+
+html:has(dialog:modal) {
+  overflow: hidden;
 }

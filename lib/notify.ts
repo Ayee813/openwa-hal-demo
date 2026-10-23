@@ -30,6 +30,8 @@ export type QueueResult = {
   /** Skipped: bad or 030 number, or a number already found without WhatsApp. */
   cannot: number;
   error?: string;
+  /** The branch's WhatsApp isn't connected: send staff to the WhatsApp page. */
+  needsWhatsApp?: boolean;
 };
 
 function laosMidnight(): string {
@@ -93,7 +95,8 @@ export async function queueBills(
   try {
     sessionId = await readySession(branch);
   } catch (e) {
-    return { ...result, error: (e as Error).message };
+    const notReady = e instanceof OpenWAError && e.status === 409;
+    return { ...result, error: (e as Error).message, ...(notReady ? { needsWhatsApp: true } : {}) };
   }
 
   const db = createAdminClient();

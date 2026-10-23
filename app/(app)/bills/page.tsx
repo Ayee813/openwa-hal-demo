@@ -12,7 +12,7 @@ import { BillsTable } from "./bills-table";
 
 export const metadata: Metadata = { title: "ເຄື່ອງຮອດສາຂາປາຍທາງ" };
 
-const LIMITS = [10, 20, 50];
+const LIMITS = [10, 20, 50, 100];
 
 export default function BillsPage({ searchParams }: PageProps<"/bills">) {
   return (
@@ -51,7 +51,9 @@ async function Bills({ searchParams }: Pick<PageProps<"/bills">, "searchParams">
     status: one(params.status) === "all" ? "" : "arrived_status",
   };
   const q = one(params.q);
-  const send = SEND_STATES.some((s) => s.key === one(params.send)) ? (one(params.send) as SendState) : null;
+  // Opens on the bills still to send; `send=all` shows every bill.
+  const sendParam = one(params.send) || "not_sent";
+  const send = SEND_STATES.some((s) => s.key === sendParam) ? (sendParam as SendState) : null;
   const limit = LIMITS.includes(Number(params.limit)) ? Number(params.limit) : 20;
   const page = Math.max(1, Number(one(params.page)) || 1);
 
