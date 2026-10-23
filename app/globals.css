@@ -79,11 +79,34 @@ dialog[open]::backdrop {
   }
 }
 
-/* The page behind an open dialog doesn't scroll; the gutter stays so it doesn't jump. */
-html {
+/* The page behind an open dialog doesn't scroll; on pages with dialogs the
+   scrollbar gutter stays, so locking doesn't make the layout jump. */
+html:has(dialog) {
   scrollbar-gutter: stable;
 }
 
 html:has(dialog:modal) {
   overflow: hidden;
+}
+
+/* Login truck (components/truck.tsx). */
+@keyframes truck-wheel {
+  to { transform: rotate(-360deg); }
+}
+@keyframes truck-road {
+  to { stroke-dashoffset: -40; }
+}
+@keyframes truck-bob {
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes truck-in {
+  from { opacity: 0; transform: translateX(40px); }
+}
+.truck-wheel { animation: truck-wheel 0.9s linear infinite; }
+.truck-road { animation: truck-road 0.6s linear infinite; }
+.truck-body { animation: truck-bob 0.5s ease-in-out infinite; }
+.truck-in { animation: truck-in 700ms cubic-bezier(.2,.8,.2,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .truck-wheel, .truck-road, .truck-body, .truck-in { animation: none; }
 }
