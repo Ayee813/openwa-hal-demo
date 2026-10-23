@@ -41,6 +41,9 @@ function matches(b: Bill, q: string): boolean {
 
 async function Bills({ searchParams }: Pick<PageProps<"/bills">, "searchParams">) {
   const params = await searchParams;
+  // Reads the session first: that makes the page request-time, so the clock
+  // below is today's date, not the build's.
+  const { session, branch } = await requireBranch();
   const today = laosDatePlus(0);
   const filter: BillFilter = {
     startDate: isDate(one(params.start)) ? one(params.start) : today,
@@ -52,7 +55,6 @@ async function Bills({ searchParams }: Pick<PageProps<"/bills">, "searchParams">
   const limit = LIMITS.includes(Number(params.limit)) ? Number(params.limit) : 20;
   const page = Math.max(1, Number(one(params.page)) || 1);
 
-  const { session, branch } = await requireBranch();
   const query = { branchId: session.branchId, ...filter };
 
   let bills: Bill[] = [];
