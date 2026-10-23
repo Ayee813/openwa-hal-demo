@@ -6,10 +6,7 @@
 #
 #   pnpm sb:link             link this folder to the hosted project
 #   pnpm db:push             apply supabase/migrations to the hosted database
-#   pnpm functions:deploy    deploy every function in supabase/functions
-#   pnpm functions:secrets   upload supabase/functions/.env as function secrets
 #   pnpm types:gen           regenerate lib/database.types.ts from the live schema
-#   pnpm deploy:supabase     link + db push + functions deploy, in that order
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -39,21 +36,6 @@ db_push() {
   supabase db push --linked ${SUPABASE_DB_PASSWORD:+--password "$SUPABASE_DB_PASSWORD"} "$@"
 }
 
-functions_deploy() {
-  # No name = every function under supabase/functions (folders starting with
-  # `_` are shared code and skipped). `--use-api` bundles server-side, so Docker
-  # is not needed.
-  supabase functions deploy "$@" --project-ref "$REF" --use-api
-}
-
-functions_secrets() {
-  if [ ! -f supabase/functions/.env ]; then
-    echo "supabase/functions/.env not found (copy supabase/functions/.env.example)" >&2
-    exit 1
-  fi
-  supabase secrets set --env-file supabase/functions/.env --project-ref "$REF"
-}
-
 types_gen() {
   supabase gen types typescript --project-id "$REF" --schema public \
     > lib/database.types.ts
@@ -66,12 +48,9 @@ shift || true
 case "$cmd" in
   link)              link ;;
   db-push)           db_push "$@" ;;
-  functions-deploy)  functions_deploy "$@" ;;
-  functions-secrets) functions_secrets ;;
   types)             types_gen ;;
-  all)               link && db_push && functions_deploy ;;
   *)
-    echo "usage: scripts/supabase.sh {link|db-push|functions-deploy [name]|functions-secrets|types|all}" >&2
+    echo "usage: scripts/supabase.sh {link|db-push|types}" >&2
     exit 1
     ;;
 esac

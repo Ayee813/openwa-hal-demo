@@ -8,15 +8,6 @@
  * and every query result would silently collapse to `never`.
  */
 
-export type UserRole = "admin" | "branch";
-
-export type ParcelStatus =
-  | "in_transit"
-  | "arrived"
-  | "notified"
-  | "picked_up"
-  | "delivered";
-
 export type MessageStatus =
   | "queued"
   | "sent"
@@ -27,26 +18,14 @@ export type MessageStatus =
 
 export type MessageKind = "arrival" | "reminder";
 
-export type Profile = {
-  id: string;
-  role: UserRole;
-  full_name: string;
-  email: string | null;
-  is_active: boolean;
-  branch_id: number | null;
-  created_at: string;
-};
-
 export type Branch = {
   /** HAL's own branch id. */
   id: number;
   name: string;
-  code: string | null;
   tel: string | null;
   district: string | null;
   province: string | null;
   staff_phone: string | null;
-  auto_send: boolean;
   pickup_days: number;
   daily_limit: number;
   /** OpenWA session id. */
@@ -55,52 +34,18 @@ export type Branch = {
   wa_phone: string | null;
   wa_name: string | null;
   wa_updated_at: string | null;
+  /** The branch's own arrival message; null uses the shared template. */
+  arrival_template: string | null;
   created_at: string;
-};
-
-export type Shipment = {
-  /** HAL's own shipment id (demo bills draw from 9000000000 up). */
-  id: number;
-  shipment_number: string;
-  shipment_type: string | null;
-  shipment_pay_type: string | null;
-  shipment_status_id: number | null;
-  status_step: string | null;
-  status_name: string | null;
-  pieces: number | null;
-  total_freight: number | null;
-  total_price: number | null;
-  sender_customer_id: number | null;
-  sender_name: string | null;
-  receiver_customer_id: number | null;
-  receiver_name: string | null;
-  start_branch_id: number | null;
-  end_branch_id: number | null;
-  start_date_actual: string | null;
-  end_date_actual: string | null;
-  hal_created_at: string | null;
-  hal_updated_at: string | null;
-  /** The record exactly as the HAL API returned it. */
-  raw: Record<string, unknown>;
-  imported_by: string | null;
-  imported_at: string;
-  parcel_status: ParcelStatus;
-  receiver_phone: string | null;
-  weight_kg: number | null;
-  size_cm: number | null;
-  cod_amount: number | null;
-  arrived_at: string | null;
-  scanned_by: string | null;
-  pickup_deadline: string | null;
-  picked_up_at: string | null;
-  is_demo: boolean;
-  last_message_status: MessageStatus | null;
-  last_message_at: string | null;
 };
 
 export type MessageLog = {
   id: number;
-  shipment_id: number;
+  bill_number: string | null;
+  tracking_id: string | null;
+  receiver_name: string | null;
+  hal_user_id: string | null;
+  sent_by_name: string | null;
   branch_id: number;
   kind: MessageKind;
   phone: string;
@@ -109,7 +54,6 @@ export type MessageLog = {
   status: MessageStatus;
   wa_message_id: string | null;
   error: string | null;
-  sent_by: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -117,8 +61,28 @@ export type MessageLog = {
 export type MessageTemplate = {
   key: MessageKind;
   body: string;
-  updated_by: string | null;
   updated_at: string;
+};
+
+/** Mock bill of the development account (lib/demo.ts). */
+export type DemoBill = {
+  id: number;
+  branch_id: number;
+  bill_number: string;
+  tracking_id: string | null;
+  receiver_name: string | null;
+  receiver_phone: string | null;
+  sender_name: string | null;
+  sender_phone: string | null;
+  start_branch: string | null;
+  start_branch_tel: string | null;
+  pay_type: string | null;
+  total_freight: number | null;
+  cod_amount: number | null;
+  weight_kg: number | null;
+  size_cm: number | null;
+  arrived_at: string;
+  created_at: string;
 };
 
 type Table<Row, Required extends keyof Row> = {
@@ -131,24 +95,17 @@ type Table<Row, Required extends keyof Row> = {
 export type Database = {
   public: {
     Tables: {
-      profiles: Table<Profile, "id" | "full_name">;
       branches: Table<Branch, "id" | "name">;
-      shipments: Table<Shipment, "shipment_number" | "raw">;
       message_logs: Table<
         MessageLog,
-        "shipment_id" | "branch_id" | "phone" | "body"
+        "branch_id" | "phone" | "body"
       >;
       message_templates: Table<MessageTemplate, "key" | "body">;
+      demo_bills: Table<DemoBill, "branch_id" | "bill_number">;
     };
     Views: Record<string, never>;
-    Functions: {
-      is_admin: { Args: Record<string, never>; Returns: boolean };
-      is_active_user: { Args: Record<string, never>; Returns: boolean };
-      my_branch_id: { Args: Record<string, never>; Returns: number | null };
-    };
+    Functions: Record<string, never>;
     Enums: {
-      user_role: UserRole;
-      parcel_status: ParcelStatus;
       message_status: MessageStatus;
     };
     CompositeTypes: Record<string, never>;

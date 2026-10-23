@@ -14,31 +14,22 @@ port = 54322
 major_version = 17
 
 [db.seed]
-enabled = true
-sql_paths = ["./seed.sql"]
+enabled = false
 
 [studio]
 enabled = true
 port = 54323
 
+# Staff sign in with HAL, not Supabase Auth: keep sign-up closed.
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000"]
-jwt_expiry = 3600
-enable_refresh_token_rotation = true
-enable_signup = false          # accounts are created by an admin, never self-serve
+enable_signup = false
 
 [auth.email]
 enable_signup = false
-enable_confirmations = false
 
 [storage]
 enabled = true
 file_size_limit = "10MiB"
 
-[functions.create-member]
-verify_jwt = true
-
-[functions.import-shipments]
-verify_jwt = true

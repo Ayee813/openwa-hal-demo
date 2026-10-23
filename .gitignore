@@ -30,10 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files — real keys live in .env.local and supabase/functions/.env
-#.env*
+# env files — real keys live in .env.local
+.env*
 !.env.example
-!supabase/functions/.env.example
 
 # vercel
 .vercel

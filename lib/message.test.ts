@@ -71,3 +71,63 @@ test("COD and destination freight add a payment line", () => {
 test("unknown placeholders are left visible", () => {
   assert.equal(renderTemplate("a {nope} b", {}), "a {nope} b");
 });
+
+test("HAL arrival message v2 matches the agreed example", () => {
+  const v2 = `☺️ຮຸ່ງອາລຸນ ຂົນສົ່ງດ່ວນ ສະບາຍດີ,
+🚚 ພັດສະດຸຮອດປາຍທາງແລ້ວ ສາຂາ {branch_name}
+ເລກ: {shipment_number}
+- ຜູ້ຮັບ: {receiver_name} | {receiver_phone}
+- ນ້ຳໜັກ: {weight} kg
+- ຂະໜາດ: {size} cm
+{payment}
+ສາຂາຕົ້ນທາງ: {start_branch}
+ເບີໂທຕົ້ນທາງ: {start_tel}
+ເບີໂທສາຂາປາຍທາງ: {branch_phones}
+📍ທີ່ຕັ້ງສາຂາ: {address}
+❗️ເຂົ້າຮັບພັດສະດຸກ່ອນວັນທີ {pickup_deadline}
+ຂອບໃຈທີ່ໃຊ້ບໍລິການຮຸ່ງອາລຸນຂົນສົ່ງດ່ວນ🙏🏻`;
+
+  const shipment = {
+    shipment_number: "VTE53938954991",
+    receiver_name: "Alex",
+    receiver_phone: "56666666",
+    weight_kg: 5.51,
+    size_cm: 78,
+    shipment_pay_type: "origin_freight_fees",
+    total_freight: 20000,
+    cod_amount: null,
+    pickup_deadline: "2026-07-26",
+    start_branch: "Buber Shop",
+    start_tel: "020 ×××××",
+  };
+  const branch = {
+    name: "ໂພນທັນ2",
+    village: "ໂພນທັນ",
+    district: "ໄຊເສດຖາ",
+    province: "ນະຄອນຫຼວງວຽງຈັນ",
+    tel: "52415523",
+    staff_phone: "02052415523 | 02054656540",
+    pickup_days: 7,
+  };
+
+  assert.equal(
+    renderMessage(v2, shipment, branch),
+    `☺️ຮຸ່ງອາລຸນ ຂົນສົ່ງດ່ວນ ສະບາຍດີ,
+🚚 ພັດສະດຸຮອດປາຍທາງແລ້ວ ສາຂາ ໂພນທັນ2
+ເລກ: VTE53938954991
+- ຜູ້ຮັບ: Alex | 020 56666666
+- ນ້ຳໜັກ: 5.51 kg
+- ຂະໜາດ: 78.00 cm
+ສາຂາຕົ້ນທາງ: Buber Shop
+ເບີໂທຕົ້ນທາງ: 020 ×××××
+ເບີໂທສາຂາປາຍທາງ: 02052415523 | 02054656540
+📍ທີ່ຕັ້ງສາຂາ: ບ້ານ ໂພນທັນ, ເມືອງ ໄຊເສດຖາ, ນະຄອນຫຼວງວຽງຈັນ
+❗️ເຂົ້າຮັບພັດສະດຸກ່ອນວັນທີ 26/07/2026
+ຂອບໃຈທີ່ໃຊ້ບໍລິການຮຸ່ງອາລຸນຂົນສົ່ງດ່ວນ🙏🏻`,
+  );
+
+  // Missing origin phone drops its line; COD adds the payment line.
+  const cod = renderMessage(v2, { ...shipment, start_tel: null, cod_amount: 79000 }, branch);
+  assert.doesNotMatch(cod, /ເບີໂທຕົ້ນທາງ/);
+  assert.match(cod, /- ຂະໜາດ: 78\.00 cm\nເກັບເງິນປາຍທາງ \(COD\): 79,000 ກີບ\nສາຂາຕົ້ນທາງ/);
+});

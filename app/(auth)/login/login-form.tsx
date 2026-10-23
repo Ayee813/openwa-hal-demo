@@ -17,7 +17,7 @@ export function LoginForm() {
         required
         autoComplete="username"
         placeholder="ອີເມວ"
-        className="rounded-md border border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+        className="h-11 rounded border border-zinc-300 bg-white px-3 outline-none focus:border-hal focus:ring-2 focus:ring-hal/15"
       />
       <input
         name="password"
@@ -25,17 +25,17 @@ export function LoginForm() {
         required
         autoComplete="current-password"
         placeholder="ລະຫັດຜ່ານ"
-        className="rounded-md border border-zinc-300 bg-white px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+        className="h-11 rounded border border-zinc-300 bg-white px-3 outline-none focus:border-hal focus:ring-2 focus:ring-hal/15"
       />
       {state.error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-hal">
           {state.error}
         </p>
       )}
       <button
         type="submit"
         disabled={pending}
-        className="rounded-md bg-zinc-900 px-3 py-2 font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
+        className="mt-2 h-11 rounded bg-hal font-semibold text-white hover:bg-hal-dark disabled:opacity-60"
       >
         {pending ? "ກຳລັງເຂົ້າ…" : "ເຂົ້າສູ່ລະບົບ"}
       </button>

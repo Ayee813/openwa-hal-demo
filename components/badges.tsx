@@ -1,27 +1,7 @@
-import type { MessageStatus, ParcelStatus } from "@/lib/types";
+import type { MessageStatus } from "@/lib/types";
 
 const base =
   "inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium";
-
-export const PARCEL_LABEL: Record<ParcelStatus, string> = {
-  in_transit: "ກຳລັງມາ",
-  arrived: "ຮອດສາຂາ",
-  notified: "ແຈ້ງລູກຄ້າແລ້ວ",
-  picked_up: "ລູກຄ້າຮັບແລ້ວ",
-  delivered: "ສຳເລັດ (HAL)",
-};
-
-const PARCEL_CLASS: Record<ParcelStatus, string> = {
-  in_transit: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  arrived: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
-  notified: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
-  picked_up: "bg-emerald-600 text-white",
-  delivered: "bg-zinc-200 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
-};
-
-export function ParcelBadge({ status }: { status: ParcelStatus }) {
-  return <span className={`${base} ${PARCEL_CLASS[status]}`}>{PARCEL_LABEL[status]}</span>;
-}
 
 export const MESSAGE_LABEL: Record<MessageStatus, string> = {
   queued: "ລໍຖ້າສົ່ງ",

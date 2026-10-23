@@ -4,9 +4,8 @@ import "server-only";
  * Minimal client for the OpenWA gateway (~/openwa/OpenWA, docker
  * `openwa-api` on 127.0.0.1:2785).
  *
- * Only Next.js server code may call it: the gateway listens on localhost, which
- * Supabase Edge Functions cannot reach, and the API key controls every
- * WhatsApp session on the box.
+ * Only Next.js server code may call it: the gateway listens on localhost, and
+ * the API key controls every WhatsApp session on the box.
  */
 
 export type SessionStatus =

@@ -3,7 +3,7 @@
 # Fails the build if the secret key leaks into code that ships to the browser.
 #
 # `lib/supabase/admin.ts` is the only module allowed to touch SUPABASE_SECRET_KEY,
-# and only server code (route handlers, server actions) may import it.
+# and only server code (pages, server actions) may import it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,7 +20,7 @@ client_files=$(
 )
 
 for f in $client_files; do
-  if matches=$(grep -n -e 'SECRET_KEY' -e 'supabase/admin' -e 'createAdminClient' -e 'OPENWA_API_KEY' -e 'lib/openwa' -e 'lib/notify' "$f"); then
+  if matches=$(grep -n -e 'SECRET_KEY' -e 'supabase/admin' -e 'createAdminClient' -e 'OPENWA_API_KEY' -e 'lib/openwa' -e 'lib/notify' -e 'lib/session' -e 'lib/hal"' -e 'SESSION_SECRET' "$f"); then
     echo "Secret-key reference found in client-reachable code: $f"
     echo "$matches"
     FAILED=1

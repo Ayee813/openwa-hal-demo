@@ -4,16 +4,11 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/types";
 
 /**
- * Secret key client. Bypasses RLS entirely.
- *
- * Allowed in exactly two places: route handlers under `app/api/**` and Supabase
- * Edge Functions. The `server-only` import above turns any accidental import
- * from a "use client" file into a build error, and `scripts/check-secrets.sh`
- * catches the rest in CI.
- *
- * Reach for this only for work that genuinely cannot be done as the caller —
- * creating auth users, writing a batch on behalf of an uploader. Everything else
- * belongs on the RLS-scoped server client in `./server`.
+ * The app's only Supabase client: server-side, secret key. Staff sign in with
+ * HAL, not Supabase, so there is no per-user client; every query is scoped by
+ * the HAL session's branch id instead. The `server-only` import turns an
+ * accidental import from a "use client" file into a build error, and
+ * `scripts/check-secrets.sh` catches the rest.
  */
 export function createAdminClient() {
   const url = process.env.SUPABASE_URL;

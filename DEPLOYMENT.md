@@ -1,71 +1,47 @@
-# Connecting and deploying to Supabase
+# Setting up and deploying
 
-Work through this in order. All commands run from the project root.
+All commands run from the project root. Staff sign in with their HAL account;
+Supabase is only the server's database (branches, message log, template).
 
-## 1. Fill in your keys
+## 1. Fill in `.env.local`
 
 ```bash
-cp .env.example .env.local   # already done once; just edit it
+cp .env.example .env.local
 ```
 
 | Variable | Where to find it |
 |---|---|
-| `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_PUBLISHABLE_KEY` | Dashboard → Project Settings → API Keys → *Publishable key* |
-| `SUPABASE_SECRET_KEY` | Same page → *Secret keys* (server-only, never `NEXT_PUBLIC_`) |
+| `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `SUPABASE_SECRET_KEY` | Dashboard → Project Settings → API Keys → *Secret keys* (server-only, never `NEXT_PUBLIC_`) |
 | `SUPABASE_PROJECT_REF` | Dashboard → Project Settings → General → *Project ID* |
 | `SUPABASE_DB_PASSWORD` | The database password (reset it under Settings → Database if unknown) |
-| `SUPABASE_ACCESS_TOKEN` | <https://supabase.com/dashboard/account/tokens> — or run `supabase login` once and leave it empty |
+| `SUPABASE_ACCESS_TOKEN` | <https://supabase.com/dashboard/account/tokens>, or run `supabase login` once and leave it empty |
+| `HAL_API_URL` | `https://hal.hal-logistics.la` |
+| `SESSION_SECRET` | `openssl rand -base64 48` (changing it signs everyone out) |
+| `OPENWA_URL` | `http://127.0.0.1:2785` |
+| `OPENWA_API_KEY` | `docker exec openwa-api cat data/.api-key` |
 
-`NEXT_PUBLIC_*` values are **inlined at build time** — rebuild after changing them.
-
-## 2. Link, push the schema, deploy the functions
+## 2. Database
 
 ```bash
 pnpm sb:link            # supabase link --project-ref $SUPABASE_PROJECT_REF
 pnpm db:push            # applies supabase/migrations/*.sql
-pnpm functions:deploy   # deploys create-member and import-shipments
 ```
 
-Or all three at once: `pnpm deploy:supabase`.
+Preview without applying: `pnpm db:push --dry-run`.
 
-Deploy a single function: `pnpm functions:deploy import-shipments`.
-Preview migrations without applying: `pnpm db:push --dry-run`.
+## 3. WhatsApp gateway
 
-If a function needs its own secrets (API tokens etc.), put them in
-`supabase/functions/.env` (see `.env.example` next to it) and run
-`pnpm functions:secrets`.
+Start OpenWA (`~/openwa/OpenWA`, docker container `openwa-api`). Each branch
+links its own WhatsApp number by scanning the QR on the **WhatsApp** page.
 
-## 3. Create the first admin
-
-```bash
-ADMIN_EMAIL=you@example.com \
-ADMIN_PASSWORD='a-real-password' \
-ADMIN_NAME='Your Name' \
-pnpm create:admin
-```
-
-Idempotent — re-run it to reset a password or repair a missing profile row.
-Further accounts: the `create-member` function (admin only).
-
-## 4. Auth settings in the dashboard
-
-Authentication → URL Configuration: set **Site URL** and **Redirect URLs** to
-your production origin.
-
-Authentication → Providers → Email: **turn off "Enable sign ups"**. Accounts
-are admin-created; RLS keeps a self-signed-up user out anyway (no `profiles`
-row), but there is no reason to leave the door open.
-
-## 5. Run it
+## 4. Run it
 
 ```bash
 pnpm dev                 # http://localhost:3000
 pnpm build && pnpm start # production
+pnpm tunnel              # share it at a https://*.trycloudflare.com URL
 ```
-
-Sign in as the admin, then import `data/demo order` from the home page — it goes
-through the `import-shipments` Edge Function into the `shipments` table.
 
 Production must be served over **HTTPS**: the session cookie is `Secure`, and a
 browser drops it over plain `http://` (except on `localhost`), which looks like
@@ -80,12 +56,4 @@ pnpm db:push
 pnpm types:gen                  # writes lib/database.types.ts from the live schema
 ```
 
-Keep `lib/types.ts` in step (or switch it to the generated file) — the Edge
-Functions import their types from there too.
-
-## Local stack (optional, needs Docker)
-
-```bash
-supabase start          # local Postgres/Auth/Studio, applies migrations + seed.sql
-supabase functions serve
-```
+Keep `lib/types.ts` in step, or switch it to the generated file.

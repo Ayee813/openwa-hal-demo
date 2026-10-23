@@ -35,3 +35,23 @@ export function formatLaoPhone(raw: string | null | undefined): string {
     ? `${local.slice(0, 3)} ${local.slice(3, 7)} ${local.slice(7)}`
     : `${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}`;
 }
+
+/**
+ * Why a receiver can't be sent a WhatsApp message, in Lao for staff, or null
+ * if the number looks sendable. 030 numbers are landline-style lines that
+ * rarely have WhatsApp, so they are not sent to.
+ */
+export function phoneProblem(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return "ບໍ່ມີເບີໂທ";
+  if (raw.includes("*")) return "ເບີຖືກປິດ (***)";
+
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.startsWith("856")) d = d.slice(3);
+  if (d.startsWith("030") || (d.startsWith("30") && d.length === 9)) return "ເບີ 030";
+
+  if (toLaoMsisdn(raw)) return null;
+  const local = d.replace(/^0/, "");
+  if (local.length > 0 && local.length < 8) return `ເບີມີແຕ່ ${local.length} ໂຕ`;
+  return "ເບີຜິດ";
+}

@@ -1,43 +1,74 @@
-import type { Branch, Shipment } from "@/lib/types";
+import type { Branch } from "@/lib/types";
 
 /**
  * Renders a message template. Pure, so the browser can preview exactly what the
  * server will send.
  *
- * `{name}` placeholders are replaced; a line that holds only placeholders which
- * all came out empty (e.g. `{payment}` on a prepaid bill) is dropped instead of
- * leaving a blank line in the message.
+ * `{name}` placeholders are replaced. A line whose placeholders all came out
+ * empty (e.g. `{payment}` on a prepaid bill, or `ເບີໂທຕົ້ນທາງ: {start_tel}` when
+ * HAL has no number) is dropped instead of sending a half-empty line.
  */
 
 export const PLACEHOLDERS = {
   shipment_number: "ເລກບິນ",
   receiver_name: "ຊື່ຜູ້ຮັບ",
+  receiver_phone: "ເບີຜູ້ຮັບ (020 xxxxxxxx)",
   weight: "ນ້ຳໜັກ (ກິໂລ)",
   size: "ຂະໜາດ (cm)",
   payment: "ແຖວເກັບເງິນ (COD / ຄ່າສົ່ງປາຍທາງ), ຫວ່າງຖ້າບໍ່ມີ",
-  branch_name: "ຊື່ສາຂາ",
+  start_branch: "ສາຂາຕົ້ນທາງ",
+  start_tel: "ເບີໂທສາຂາຕົ້ນທາງ",
+  branch_name: "ຊື່ສາຂາປາຍທາງ",
   district: "ເມືອງ",
+  address: "ທີ່ຕັ້ງສາຂາ (ບ້ານ, ເມືອງ, ແຂວງ)",
+  branch_phones: "ເບີໂທສາຂາປາຍທາງ (ຕັ້ງຄ່າໃນໜ້າ WhatsApp)",
   staff_phone: "ເບີພະນັກງານ",
   branch_tel: "ເບີໂທສາຂາ",
   pickup_deadline: "ວັນທີຮັບກ່ອນ",
 } as const;
 
-export type MessageShipment = Pick<
-  Shipment,
-  | "shipment_number"
-  | "receiver_name"
-  | "weight_kg"
-  | "size_cm"
-  | "shipment_pay_type"
-  | "total_freight"
-  | "cod_amount"
-  | "pickup_deadline"
->;
+export type MessageShipment = {
+  shipment_number: string;
+  receiver_name: string | null;
+  weight_kg: number | null;
+  size_cm: number | null;
+  shipment_pay_type: string | null;
+  total_freight: number | null;
+  cod_amount: number | null;
+  pickup_deadline: string | null;
+  receiver_phone?: string | null;
+  start_branch?: string | null;
+  start_tel?: string | null;
+};
 
 export type MessageBranch = Pick<
   Branch,
   "name" | "district" | "tel" | "staff_phone" | "pickup_days"
->;
+> & {
+  village?: string | null;
+  province?: string | null;
+};
+
+/** "56666666" / "02056666666" / "8562056666666" → "020 56666666". */
+export function displayPhone(raw: string | null | undefined): string {
+  const digits = (raw ?? "").replace(/\D/g, "");
+  const local = digits.startsWith("856") ? digits.slice(3) : digits.replace(/^0/, "");
+  if (/^20\d{8}$/.test(local)) return `020 ${local.slice(2)}`;
+  if (/^\d{8}$/.test(local)) return `020 ${local}`;
+  if (/^30\d{7}$/.test(local)) return `030 ${local.slice(2)}`;
+  return (raw ?? "").trim();
+}
+
+/** "ບ້ານ ໂພນທັນ, ເມືອງ ໄຊເສດຖາ, ນະຄອນຫຼວງວຽງຈັນ", skipping missing parts. */
+export function branchAddress(b: MessageBranch): string {
+  return [
+    b.village ? `ບ້ານ ${b.village}` : "",
+    b.district ? `ເມືອງ ${b.district}` : "",
+    b.province ?? "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
 
 const kip = new Intl.NumberFormat("en-US");
 
@@ -79,11 +110,16 @@ export function messageValues(
   return {
     shipment_number: s.shipment_number,
     receiver_name: s.receiver_name ?? "",
+    receiver_phone: displayPhone(s.receiver_phone),
     weight: decimal(s.weight_kg, 2),
     size: decimal(s.size_cm, 2),
     payment: paymentLine(s),
+    start_branch: s.start_branch ?? "",
+    start_tel: s.start_tel ?? "",
     branch_name: b.name,
     district: b.district ?? "",
+    address: branchAddress(b),
+    branch_phones: b.staff_phone ?? b.tel ?? "",
     staff_phone: b.staff_phone ?? b.tel ?? "",
     branch_tel: b.tel ?? "",
     pickup_deadline: formatDate(
@@ -105,8 +141,8 @@ export function renderTemplate(
       const rendered = line.replace(placeholder, (whole, key: string) =>
         key in values ? values[key] : whole,
       );
-      const onlyPlaceholders = keys.length > 0 && !line.replace(placeholder, "").trim();
-      return onlyPlaceholders && !rendered.trim() ? [] : [rendered];
+      const allEmpty = keys.length > 0 && keys.every((k) => k in values && !values[k].trim());
+      return allEmpty ? [] : [rendered];
     })
     .join("\n")
     .trim();

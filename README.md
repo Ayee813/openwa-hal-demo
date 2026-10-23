@@ -1,99 +1,87 @@
-# OpenWA HAL Demo — ແຈ້ງບິນ HAL Express ຜ່ານ WhatsApp
+# HAL Express — ແຈ້ງບິນ WhatsApp
 
-Demo: ເມື່ອພັດສະດຸຮອດສາຂາປາຍທາງ, ພະນັກງານສະແກນເຄື່ອງເຂົ້າ ແລ້ວລະບົບສົ່ງ WhatsApp
-ແຈ້ງຜູ້ຮັບຈາກເບີຂອງສາຂາ ຜ່ານ OpenWA (`~/openwa/OpenWA`, docker `openwa-api`).
+ພະນັກງານສາຂາ HAL **ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີ HAL Admin ຂອງຕົນເອງ**, ເຫັນເຄື່ອງທີ່ຮອດສາຂາ
+(ດຶງສົດຈາກ HAL API), ເລືອກບິນ ແລ້ວສົ່ງ WhatsApp ແຈ້ງລູກຄ້າ ຈາກເບີຂອງສາຂາ
+ຜ່ານ OpenWA (`~/openwa/OpenWA`, docker `openwa-api`).
 
-Next.js 16 + Supabase (Auth, Postgres with RLS, Edge Functions).
+Next.js 16 + Supabase (Postgres) + OpenWA.
 
-## Roles
+## ການເຮັດວຽກ
 
-- **admin** (`/admin`): ພາບລວມທຸກສາຂາ, ບິນທັງໝົດ + ນຳເຂົ້າ HAL JSON, ສ້າງສາຂາ/ບັນຊີ,
-  ຜູກ session WhatsApp, ປະຫວັດຂໍ້ຄວາມ, ແກ້ແມ່ແບບຂໍ້ຄວາມ.
-- **branch** (`/branch`): ເຫັນສະເພາະບິນທີ່ປາຍທາງແມ່ນສາຂາຕົນ (RLS).
-  - ລາຍການບິນ: tabs ຕາມສະຖານະ, ເລືອກ/ເລືອກທັງໝົດ, preview ແລ້ວສົ່ງ, ສົ່ງເຕືອນ,
-    ໝາຍ “ຮັບແລ້ວ”, Generate ບິນ demo, ລຶບບິນ demo.
-  - ສະແກນ: ເປີດກ້ອງ (ອ່ານ barcode ຈິງຖ້າ browser ມີ `BarcodeDetector`),
-    ປຸ່ມ “ຈຳລອງສະແກນ”, ພິມເລກບິນເອງ. ຖ້າເປີດ auto, ສະແກນແລ້ວສົ່ງທັນທີ.
-  - WhatsApp: QR login ຂອງສາຂາ (session OpenWA `hal-branch-<id>`), ຕັ້ງຄ່າ auto,
-    ເບີພະນັກງານ, ຈຳນວນມື້ໃຫ້ມາຮັບ.
+- **Login (`/login`)**: ສົ່ງ email/ລະຫັດ ໄປ `POST /api/admin/sign-in` ຂອງ HAL ຈາກ server.
+  Token ຂອງ HAL ເກັບໃນ cookie `hal_session` (httpOnly, ເຂົ້າລະຫັດ AES-256-GCM ດ້ວຍ
+  `SESSION_SECRET`), browser ອ່ານບໍ່ໄດ້. ສາຂາມາຈາກ `authUser.branch_id`.
+- **ເຄື່ອງຮອດສາຂາ (`/bills`)**: ດຶງຈາກ HAL `holding-shipments` (status `arrived_status`)
+  ຕາມຊ່ວງວັນທີ. ຄົ້ນຫາ (ເບີໂທ / ເລກບິນ / ຊື່), ປ່ຽນໜ້າ, ເລືອກ / ເລືອກທັງໝົດ,
+  ສົ່ງທີ່ເລືອກ, ສົ່ງທັງໝົດ (ທຸກໜ້າໃນຊ່ວງວັນທີ), ສົ່ງ ຫຼື ສົ່ງຄືນເທື່ອລະບິນ,
+  ເບິ່ງລາຍລະອຽດ + ຕົວຢ່າງຂໍ້ຄວາມ, ສະຖານະ WhatsApp ຂອງແຕ່ລະບິນ.
+- **WhatsApp (`/whatsapp`)**: QR login ຂອງສາຂາ (session OpenWA `hal-branch-<branch_id>`),
+  ເບີພະນັກງານ, ຈຳນວນມື້ໃຫ້ມາຮັບ.
 
-## Flow ຂອງບິນ
+Supabase ເກັບສະເພາະຂໍ້ມູນຂອງລະບົບນີ້ (ຂຽນຈາກ server ດ້ວຍ secret key, ກອງຕາມ
+`branch_id` ຂອງ session): `branches` (WhatsApp + ຕັ້ງຄ່າ), `message_logs` (ບິນໃດສົ່ງແລ້ວ,
+ກັນສົ່ງຊ້ຳ), `message_templates`.
 
-`in_transit` (ກຳລັງມາ) → scan → `arrived` → ສົ່ງ WhatsApp ສຳເລັດ → `notified` → `picked_up`.
-ບິນທີ່ນຳເຂົ້າຈາກ HAL ທີ່ຈັດສົ່ງແລ້ວ ເປັນ `delivered` ແລະ ສົ່ງບໍ່ໄດ້.
-
-ການສົ່ງ (`lib/notify.ts`): ບັນທຶກ `message_logs` ເປັນ `queued` → ຫຼັງ response ສົ່ງເທື່ອລະຂໍ້ຄວາມ
-ຫ່າງກັນ 3–6 ວິນາທີ (ກວດເບີມີ WhatsApp ກ່ອນ) → `sent` / `no_whatsapp` / `failed`.
-ໜ້າລາຍການບິນ poll OpenWA ທຸກ 5 ວິນາທີ ເພື່ອອັບເດດ `delivered` / `read`
-(ບໍ່ໃຊ້ webhook ເພາະ OpenWA ມີ SSRF guard ບລັອກ localhost). ມີເພດານຕໍ່ວັນຕໍ່ສາຂາ.
-
-OpenWA ຖືກເອີ້ນຈາກ Next.js server ເທົ່ານັ້ນ (Edge Function ໃນ cloud ເຂົ້າ localhost ບໍ່ໄດ້).
+ການສົ່ງ (`lib/notify.ts`): server ດຶງບິນຈາກ HAL ຄືນໃໝ່ດ້ວຍ token ຂອງຜູ້ໃຊ້ (browser ສົ່ງໄດ້ແຕ່
+ເລກບິນ, ບໍ່ແມ່ນເບີ ຫຼື ຂໍ້ຄວາມ) → ບັນທຶກ `queued` → ສົ່ງເທື່ອລະຂໍ້ຄວາມ ຫ່າງກັນ 3–6 ວິນາທີ
+→ `sent` / `no_whatsapp` / `failed`, ແລ້ວ poll OpenWA ເພື່ອ `delivered` / `read`.
+ມີເພດານຕໍ່ວັນຕໍ່ສາຂາ.
 
 ## Layout
 
 ```
-app/                      pages; (auth)/ holds login + sign-in/out actions
-lib/env.ts                fails fast on missing NEXT_PUBLIC_* vars
-lib/supabase/client.ts    browser client (publishable key, RLS)
-lib/supabase/server.ts    server client acting as the signed-in user (RLS)
-lib/supabase/admin.ts     secret-key client — server-only, bypasses RLS
-lib/supabase/middleware.ts + proxy.ts   session refresh, redirect to /login
-lib/auth.ts               getProfile() / requireProfile(role)
-lib/types.ts              Database types, shared with the Edge Functions
-lib/openwa.ts             OpenWA REST client (server-only)
+app/(auth)/               login page + signIn / signOut (HAL)
+app/(app)/bills/          ເຄື່ອງຮອດສາຂາ: page.tsx (HAL fetch) + bills-table.tsx
+app/(app)/whatsapp/       QR + settings
+app/(app)/actions.ts      sendBills, billStatuses, WhatsApp + settings actions
+lib/hal.ts                HAL API client (server-only): signIn, holdingPage, holdingAll
+lib/session.ts            encrypted session cookie, requireSession / requireBranch
+lib/bill.ts               Bill type + date helpers (shared with the browser)
 lib/notify.ts             queue + send + status sync of WhatsApp messages
-lib/message.ts            message template rendering (shared with the browser preview)
+lib/openwa.ts             OpenWA REST client (server-only)
+lib/message.ts            message template rendering
 lib/phone.ts              Lao phone → WhatsApp id (97364057 → 8562097364057@c.us)
-app/branch/               bills, scan, whatsapp pages + actions.ts
-app/admin/                dashboard, bills, branches, messages, template + actions.ts
-supabase/migrations/      0001 profiles + roles, 0002 shipments, 0003 branches + messaging
-supabase/functions/       create-member, import-shipments (+ _shared)
-scripts/                  supabase.sh (CLI wrapper), check-secrets.sh, create-admin.mjs
+lib/bills-source.ts       bills from HAL, or from demo_bills for the dev account
+lib/demo.ts               mock bill generator of the dev account
+lib/supabase/admin.ts     secret-key client (server-only)
+supabase/migrations/      0001–0008 (0006 drops the first version's auth + demo tables, 0007 adds demo_bills, 0008 per-branch message)
+public/hal-logo.png       HAL Express logo
 ```
+
+## Setup
+
+`.env.local` (template: `.env.example`):
+
+| | |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | the database (server-only) |
+| `HAL_API_URL` | `https://hal.hal-logistics.la` |
+| `SESSION_SECRET` | `openssl rand -base64 48` |
+| `OPENWA_URL` | `http://127.0.0.1:2785` |
+| `OPENWA_API_KEY` | `docker exec openwa-api cat data/.api-key` |
+| `DEV_LOGIN_EMAIL`, `DEV_LOGIN_PASSWORD` | optional development account (leave empty in production) |
 
 ## Commands
 
 | | |
 |---|---|
 | `pnpm dev` | dev server |
-| `pnpm build` | secret-leak check + production build |
-| `pnpm typecheck` / `pnpm lint` | |
-| `pnpm test` | unit tests (phone numbers, message rendering) |
-| `pnpm sb:link` | link to the project in `SUPABASE_PROJECT_REF` |
+| `pnpm build` / `pnpm start` | production build / server |
+| `pnpm tunnel` | share the running app at a public `https://*.trycloudflare.com` URL |
+| `pnpm typecheck` / `pnpm lint` / `pnpm test` | checks, unit tests |
 | `pnpm db:push` | apply migrations to the hosted DB |
-| `pnpm functions:deploy [name]` | deploy Edge Functions (all, or one) |
-| `pnpm functions:secrets` | upload `supabase/functions/.env` |
-| `pnpm types:gen` | generate `lib/database.types.ts` |
-| `pnpm deploy:supabase` | link + db push + functions deploy |
-| `pnpm create:admin` | create/repair an admin account |
 
 The CLI commands read the project ref, DB password and access token from
-`.env.local`. See [DEPLOYMENT.md](DEPLOYMENT.md) for the full first-time setup.
+`.env.local`. See [DEPLOYMENT.md](DEPLOYMENT.md) for the first-time setup.
 
 ## Accounts
 
-Demo accounts. Sign in at http://localhost:3000/login.
+Sign in with a real **HAL Admin** account that belongs to a branch: bills come
+live from HAL.
 
-| Role | Branch | Email | Password |
-|---|---|---|---|
-| admin | — | yongyeelove813@gmail.com | `12qwaszx` |
-| branch | ນາຄ່ອນ (#410) | yongyeevuesengchan@gmail.com | `12qwaszx` |
-| admin | — | admin@hal-demo.la | `HalAdmin#2026` |
-| branch | ນາຄ່ອນ (#410) | nakhon@hal-demo.la | `Branch#2026` |
-| branch | ຕານມີໄຊ (#53) | tanmixay@hal-demo.la | `Branch#2026` |
-
-> Demo-only passwords. Change them (re-run `pnpm create:admin` with a new
-> `ADMIN_PASSWORD`) before this app is reachable by anyone else.
-
-Create more, or reset a password (re-running is safe):
-
-```bash
-ADMIN_EMAIL=… ADMIN_PASSWORD=… ADMIN_NAME=… pnpm create:admin
-# a branch account from the CLI (or use /admin/branches):
-ADMIN_ROLE=branch ADMIN_BRANCH_ID=410 ADMIN_EMAIL=… ADMIN_PASSWORD=… ADMIN_NAME=… pnpm create:admin
-```
-
-## OpenWA
-
-`.env.local` needs `OPENWA_URL` (default `http://127.0.0.1:2785`) and
-`OPENWA_API_KEY` (`docker exec openwa-api cat data/.api-key`).
+For development, set `DEV_LOGIN_EMAIL` and `DEV_LOGIN_PASSWORD` in `.env.local`.
+Signing in with that email never reaches HAL; it opens the demo branch
+"ທົດລອງ (DEV)" (id 999999), with its own WhatsApp session and message log.
+There, **Generate ບິນ** makes mock parcels sent to numbers you choose (use your
+own: messages really go out), and **ລຶບຂໍ້ມູນທົດລອງ** clears them. Empty
+`DEV_LOGIN_EMAIL` turns the account off, including cookies already issued.

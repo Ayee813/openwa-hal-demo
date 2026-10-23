@@ -10,19 +10,14 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON lib/*.test.ts",
     "check:secrets": "bash scripts/check-secrets.sh",
-    "create:admin": "node scripts/create-admin.mjs",
     "sb:link": "bash scripts/supabase.sh link",
     "db:push": "bash scripts/supabase.sh db-push",
-    "functions:deploy": "bash scripts/supabase.sh functions-deploy",
-    "functions:secrets": "bash scripts/supabase.sh functions-secrets",
     "types:gen": "bash scripts/supabase.sh types",
-    "deploy:supabase": "bash scripts/supabase.sh all"
+    "tunnel": "cloudflared tunnel --no-autoupdate --url http://localhost:3000"
   },
   "dependencies": {
-    "@supabase/server": "^1.9.1",
-    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
-    "next": "16.4.0",
+    "next": "16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "^0.0.1",
@@ -34,7 +29,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.0",
+    "eslint-config-next": "16.4.2",
     "tailwindcss": "^4",
     "typescript": "^5"
   },
