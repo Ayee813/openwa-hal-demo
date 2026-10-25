@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { MessageBadge } from "@/components/badges";
+import { Spinner } from "@/components/spinner";
 import {
   PAY_LABEL,
   SEND_STATES,
@@ -23,41 +24,35 @@ import { DemoTools } from "./demo-tools";
 const kip = new Intl.NumberFormat("en-US");
 /** Bills per page; the page parses the same list. */
 const PER_PAGE = [10, 20, 50, 100];
+/** How often statuses are re-read while messages are in flight. */
+const POLL_MS = 8000;
 
 type Notice = { tone: "ok" | "error"; text: string } | null;
 type Pending = { kind: "selected" | "all" | "one"; bills: Bill[]; resend: boolean } | null;
+type View = { send: SendState | null; page: number; limit: number };
 
 export function BillsTable({
-  bills,
+  bills: found,
   initialStatuses,
   filter,
   q,
-  send,
-  counts,
-  found,
-  page,
-  limit,
-  lastPage,
-  total,
+  initialSend,
+  initialPage,
+  initialLimit,
   truncated,
   error,
   template,
   branch,
   demo,
 }: {
+  /** Every bill in the range (after search); tabs and pages are cut here. */
   bills: Bill[];
   initialStatuses: Record<string, LatestMessage>;
   filter: BillFilter;
   q: string;
-  send: SendState | null;
-  /** Bills per send state across the whole range (after search). */
-  counts: Record<SendState, number>;
-  /** Bills in the range (after search), before the send-state tab. */
-  found: number;
-  page: number;
-  limit: number;
-  lastPage: number;
-  total: number;
+  initialSend: SendState | null;
+  initialPage: number;
+  initialLimit: number;
   truncated: boolean;
   error: string | null;
   template: string;
@@ -66,41 +61,105 @@ export function BillsTable({
   demo: boolean;
 }) {
   const [statuses, setStatuses] = useState(initialStatuses);
+  const [seen, setSeen] = useState(initialStatuses);
+  const [view, setView] = useState<View>({ send: initialSend, page: initialPage, limit: initialLimit });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [notice, setNotice] = useState<Notice>(null);
   const [confirm, setConfirm] = useState<Pending>(null);
   const [detail, setDetail] = useState<Bill | null>(null);
+  /** Bills being queued right now, for a spinner on their row. */
+  const [queuing, setQueuing] = useState<Set<string>>(new Set());
+  /** Rows whose status just changed, briefly highlighted. */
+  const [flash, setFlash] = useState<Set<string>>(new Set());
+  const [visible, setVisible] = useState(true);
   const [busy, startTransition] = useTransition();
+  const [navigating, startNav] = useTransition();
   const router = useRouter();
   const confirmRef = useRef<HTMLDialogElement>(null);
   const connectRef = useRef<HTMLDialogElement>(null);
   const detailRef = useRef<HTMLDialogElement>(null);
-  const wasSending = useRef(false);
+
+  // A server refresh (after generating demo bills, say) brings new statuses.
+  if (initialStatuses !== seen) {
+    setSeen(initialStatuses);
+    setStatuses(initialStatuses);
+  }
+
+  // Tab counts and the current page, all from the one list.
+  const counts = Object.fromEntries(SEND_STATES.map((s) => [s.key, 0])) as Record<SendState, number>;
+  const inTab: Bill[] = [];
+  for (const b of found) {
+    const { state } = sendState(b, statuses[b.billNumber]);
+    counts[state]++;
+    if (!view.send || state === view.send) inTab.push(b);
+  }
+  const { limit } = view;
+  const total = inTab.length;
+  const lastPage = Math.max(1, Math.ceil(total / limit));
+  const page = Math.min(view.page, lastPage);
+  const bills = inTab.slice((page - 1) * limit, page * limit);
 
   const sendable = bills.filter((b) => !phoneProblem(b.receiverPhone));
   const allChecked = sendable.length > 0 && sendable.every((b) => selected.has(b.billNumber));
   const chosen = sendable.filter((b) => selected.has(b.billNumber));
   const unsent = counts.not_sent + counts.failed;
 
-  // Poll message status while anything on screen is queued or freshly sent.
-  useEffect(() => {
-    const sending = Object.values(statuses).some((s) => s.status === "queued");
-    // The tab counts come from the server: refresh them once a batch finishes.
-    if (wasSending.current && !sending) router.refresh();
-    wasSending.current = sending;
+  /** Replaces statuses and highlights the rows that changed. */
+  function applyStatuses(next: Record<string, LatestMessage>) {
+    const changed = Object.keys(next).filter((n) => next[n]?.status !== statuses[n]?.status);
+    setStatuses((s) => ({ ...s, ...next }));
+    if (changed.length) setFlash(new Set(changed));
+  }
 
-    const live =
-      sending ||
-      Object.values(statuses).some(
-        (s) => s.status === "sent" && Date.now() - Date.parse(s.at) < 15 * 60_000,
-      );
-    if (!live) return;
-    const t = setTimeout(async () => {
-      const next = await billStatuses(bills.map((b) => b.billNumber)).catch(() => null);
-      if (next) setStatuses(next);
-    }, 5000);
+  useEffect(() => {
+    if (flash.size === 0) return;
+    const t = setTimeout(() => setFlash(new Set()), 1600);
     return () => clearTimeout(t);
-  }, [statuses, bills, router]);
+  }, [flash]);
+
+  useEffect(() => {
+    if (notice?.tone !== "ok") return;
+    const t = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  // Back and forward move between tabs and pages too.
+  useEffect(() => {
+    const onPop = () => {
+      const p = new URLSearchParams(window.location.search);
+      const send = p.get("send");
+      setView({
+        send: SEND_STATES.some((s) => s.key === send) ? (send as SendState) : null,
+        page: Math.max(1, Number(p.get("page")) || 1),
+        limit: PER_PAGE.includes(Number(p.get("limit"))) ? Number(p.get("limit")) : 20,
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    const onChange = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+
+  // Poll the bills still in flight (queued, or sent in the last 15 minutes),
+  // only while this tab is in view.
+  useEffect(() => {
+    if (!visible) return;
+    const live = Object.entries(statuses)
+      .filter(([, s]) => s.status === "queued" || (s.status === "sent" && Date.now() - Date.parse(s.at) < 15 * 60_000))
+      .map(([n]) => n);
+    if (live.length === 0) return;
+    const t = setTimeout(async () => {
+      const next = await billStatuses(live.slice(0, 1000)).catch(() => null);
+      if (next) applyStatuses(next);
+    }, POLL_MS);
+    return () => clearTimeout(t);
+    // applyStatuses only reads `statuses`, which is already a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statuses, visible]);
 
   useEffect(() => {
     if (confirm) confirmRef.current?.showModal();
@@ -141,15 +200,19 @@ export function BillsTable({
   }
 
   function run(p: NonNullable<Pending>) {
+    const numbers = p.kind === "all" ? found.map((b) => b.billNumber) : p.bills.map((b) => b.billNumber);
+    setQueuing(new Set(numbers));
     startTransition(async () => {
       const res = await sendBills({
         filter,
-        billNumbers: p.kind === "all" ? undefined : p.bills.map((b) => b.billNumber),
+        billNumbers: p.kind === "all" ? undefined : numbers,
         resend: p.resend,
       });
       setConfirm(null);
       if (res.needsWhatsApp) {
         connectRef.current?.showModal();
+        // The sidebar and banner show the WhatsApp state from the server.
+        router.refresh();
       } else if (res.error) {
         setNotice({ tone: "error", text: res.error });
       } else {
@@ -163,30 +226,47 @@ export function BillsTable({
         });
         setSelected(new Set());
       }
-      const next = await billStatuses(bills.map((b) => b.billNumber)).catch(() => null);
-      if (next) setStatuses(next);
-      router.refresh();
+      const next = await billStatuses(numbers.slice(0, 1000)).catch(() => null);
+      if (next) applyStatuses(next);
+      setQueuing(new Set());
     });
   }
 
-  const href = (p: number, tab: SendState | null = send, perPage = limit) => ({
-    pathname: "/bills",
-    query: {
-      start: filter.startDate,
-      end: filter.endDate,
-      ...(filter.status ? {} : { status: "all" }),
-      ...(q ? { q } : {}),
-      send: tab ?? "all",
-      limit: perPage,
-      page: p,
-    },
-  });
+  /** Switches tab, page or page size at once, keeping the URL in step. */
+  function show(next: Partial<View>) {
+    const v = { ...view, ...next };
+    setView(v);
+    setSelected(new Set());
+    window.history.pushState(null, "", url(v));
+  }
+
+  const url = (v: View) => {
+    const p = new URLSearchParams({ start: filter.startDate, end: filter.endDate });
+    if (!filter.status) p.set("status", "all");
+    if (q) p.set("q", q);
+    p.set("send", v.send ?? "all");
+    p.set("limit", String(v.limit));
+    p.set("page", String(v.page));
+    return `/bills?${p}`;
+  };
+
+  /** Search and clear load new bills from the server; the table dims meanwhile. */
+  function search(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const p = new URLSearchParams();
+    for (const [k, v] of fd) if (typeof v === "string" && v) p.set(k, v);
+    p.set("send", view.send ?? "all");
+    startNav(() => router.push(`/bills?${p}`));
+  }
 
   const input =
     "h-9 w-full rounded border border-zinc-300 bg-white px-3 text-sm outline-none focus:border-hal focus:ring-2 focus:ring-hal/15";
 
   return (
     <div className="flex flex-col gap-4">
+      {navigating && <div className="nav-progress" role="progressbar" aria-label="ກຳລັງໂຫຼດ" />}
+
       {/* ---------- Title + filters ---------- */}
       <section className="rounded-lg bg-white px-5 py-4">
         <div className="mb-4 flex items-baseline gap-3">
@@ -194,7 +274,7 @@ export function BillsTable({
           <span className="text-sm text-zinc-400">ແຈ້ງລູກຄ້າທາງ WhatsApp</span>
           {demo && <DemoTools date={filter.endDate} />}
         </div>
-        <form action="/bills" className="grid gap-3 md:grid-cols-[2fr_1.3fr_1.3fr_1fr_0.7fr_auto_auto] md:items-end">
+        <form onSubmit={search} className="grid gap-3 md:grid-cols-[2fr_1.3fr_1.3fr_1fr_0.7fr_auto_auto] md:items-end">
           <label className="flex flex-col gap-1 text-sm">
             ຄົ້ນຫາ:
             <input name="q" defaultValue={q} placeholder="ຄົ້ນຫາ ເບີໂທ, ບິນລູກຄ້າ" className={input} />
@@ -224,16 +304,20 @@ export function BillsTable({
               ))}
             </select>
           </label>
-          <button className="flex h-9 items-center justify-center gap-2 rounded bg-hal px-8 text-sm font-medium text-white hover:bg-hal-dark">
-            <SearchIcon /> ຄົ້ນຫາ
+          <button
+            disabled={navigating}
+            className="flex h-9 min-w-36 items-center justify-center gap-2 rounded bg-hal px-6 text-sm font-medium text-white hover:bg-hal-dark disabled:opacity-80"
+          >
+            {navigating ? <Spinner /> : <SearchIcon />} {navigating ? "ກຳລັງຄົ້ນຫາ…" : "ຄົ້ນຫາ"}
           </button>
-          <input type="hidden" name="send" value={send ?? "all"} />
-          <Link
-            href="/bills"
-            className="flex h-9 items-center justify-center gap-2 rounded border border-zinc-300 bg-white px-8 text-sm hover:border-hal hover:text-hal"
+          <button
+            type="button"
+            disabled={navigating}
+            onClick={() => startNav(() => router.push("/bills"))}
+            className="flex h-9 items-center justify-center gap-2 rounded border border-zinc-300 bg-white px-8 text-sm hover:border-hal hover:text-hal disabled:opacity-60"
           >
             ↻ ລ້າງ
-          </Link>
+          </button>
         </form>
       </section>
 
@@ -241,14 +325,19 @@ export function BillsTable({
       <nav aria-label="ສະຖານະການສົ່ງ" className="flex flex-wrap gap-2">
         {/* The default tab first, "all" last. */}
         {[...SEND_STATES, { key: null, label: "ທັງໝົດ" }].map((t) => {
-          const n = t.key ? counts[t.key] : found;
-          const on = send === t.key;
+          const n = t.key ? counts[t.key] : found.length;
+          const on = view.send === t.key;
           return (
-            <Link
+            <a
               key={t.key ?? "all"}
-              href={href(1, t.key)}
+              href={url({ ...view, send: t.key, page: 1 })}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                show({ send: t.key, page: 1 });
+              }}
               aria-current={on ? "page" : undefined}
-              className={`flex h-9 items-center gap-2 rounded-full border px-4 text-sm ${
+              className={`flex h-9 items-center gap-2 rounded-full border px-4 text-sm transition-colors ${
                 on ? "border-hal bg-hal text-white" : "border-zinc-300 bg-white hover:border-hal hover:text-hal"
               }`}
             >
@@ -257,7 +346,7 @@ export function BillsTable({
               <span className={`rounded-full px-1.5 text-xs tabular-nums ${on ? "bg-white/25" : "bg-zinc-100"}`}>
                 {n}
               </span>
-            </Link>
+            </a>
           );
         })}
       </nav>
@@ -265,17 +354,18 @@ export function BillsTable({
       {/* ---------- Actions ---------- */}
       <div className="flex flex-wrap items-center gap-2">
         <button
-          disabled={busy || chosen.length === 0}
+          disabled={busy || navigating || chosen.length === 0}
           onClick={() => ask({ kind: "selected", bills: chosen, resend: false })}
           className="flex h-9 items-center gap-2 rounded bg-wa px-4 text-sm font-medium text-white hover:brightness-95 disabled:cursor-not-allowed disabled:bg-zinc-200 disabled:text-zinc-400"
         >
-          <WaIcon className="size-4" /> ສົ່ງບິນທີ່ເລືອກ ({chosen.length})
+          {busy && confirm?.kind === "selected" ? <Spinner /> : <WaIcon className="size-4" />} ສົ່ງບິນທີ່ເລືອກ ({chosen.length})
         </button>
         <button
-          disabled={busy || unsent === 0}
+          disabled={busy || navigating || unsent === 0}
           onClick={() => ask({ kind: "all", bills: sendable, resend: false })}
           className="flex h-9 items-center gap-2 rounded border border-wa bg-white px-4 text-sm font-medium text-wa-text hover:bg-green-50 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:text-zinc-400"
         >
+          {busy && confirm?.kind === "all" && <Spinner />}
           ສົ່ງທັງໝົດທີ່ຍັງບໍ່ສົ່ງ ({unsent})
         </button>
         <span className="ml-auto text-sm text-zinc-500">
@@ -303,18 +393,28 @@ export function BillsTable({
       )}
 
       {notice && (
-        <p
+        <div
           role={notice.tone === "error" ? "alert" : "status"}
-          className={`rounded px-4 py-2.5 text-sm ${
+          className={`flex items-start gap-3 rounded px-4 py-2.5 text-sm ${
             notice.tone === "error" ? "bg-hal-soft text-hal-dark" : "bg-green-50 text-green-800"
           }`}
         >
-          {notice.text}
-        </p>
+          <p className="flex-1">{notice.text}</p>
+          <button onClick={() => setNotice(null)} aria-label="ປິດ" className="leading-none opacity-60 hover:opacity-100">
+            ×
+          </button>
+        </div>
       )}
 
       {/* ---------- Table ---------- */}
-      <section className="overflow-hidden rounded-lg bg-white">
+      <section className="relative overflow-hidden rounded-lg bg-white" aria-busy={navigating}>
+        {navigating && (
+          <div className="absolute inset-0 z-10 grid place-items-center bg-white/60">
+            <span className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm text-zinc-600 shadow">
+              <Spinner className="text-hal" /> ກຳລັງໂຫຼດບິນ…
+            </span>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-head text-[13px] font-semibold text-zinc-700">
@@ -349,12 +449,13 @@ export function BillsTable({
                 const st = statuses[b.billNumber];
                 const { state, reason } = sendState(b, st);
                 const badPhone = !!phoneProblem(b.receiverPhone);
+                const rowBusy = busy && queuing.has(b.billNumber);
                 return (
                   <tr
                     key={b.billNumber}
                     className={`border-b border-line whitespace-nowrap ${
-                      selected.has(b.billNumber) ? "bg-hal-soft/50" : "hover:bg-head"
-                    }`}
+                      flash.has(b.billNumber) ? "row-flash" : ""
+                    } ${selected.has(b.billNumber) ? "bg-hal-soft/50" : "hover:bg-head"}`}
                   >
                     <td className="px-4 py-5">
                       <input
@@ -375,8 +476,18 @@ export function BillsTable({
                           disabled={busy || badPhone || state === "sending"}
                           className="flex items-center gap-2 font-medium text-wa-text hover:underline disabled:cursor-not-allowed disabled:text-zinc-400 disabled:no-underline"
                         >
-                          <WaIcon className={`size-5 ${badPhone ? "text-zinc-300" : "text-wa"}`} />
-                          {state === "sent" ? "ສົ່ງຄືນ" : state === "failed" || state === "cannot" ? "ລອງສົ່ງອີກ" : "ສົ່ງບິນລູກຄ້າ"}
+                          {rowBusy ? (
+                            <Spinner className="size-5 text-wa" />
+                          ) : (
+                            <WaIcon className={`size-5 ${badPhone ? "text-zinc-300" : "text-wa"}`} />
+                          )}
+                          {rowBusy
+                            ? "ກຳລັງເຂົ້າຄິວ…"
+                            : state === "sent"
+                              ? "ສົ່ງຄືນ"
+                              : state === "failed" || state === "cannot"
+                                ? "ລອງສົ່ງອີກ"
+                                : "ສົ່ງບິນລູກຄ້າ"}
                         </button>
                         <StateBadge state={state} reason={reason} message={st} />
                       </div>
@@ -420,7 +531,7 @@ export function BillsTable({
           <p className="p-10 text-center text-sm text-hal">ໂຫຼດບິນບໍ່ໄດ້: {error}</p>
         ) : bills.length === 0 ? (
           <p className="p-10 text-center text-sm text-zinc-500">
-            {send ? "ບໍ່ມີບິນໃນສະຖານະນີ້" : "ບໍ່ມີບິນໃນຊ່ວງວັນທີນີ້"}
+            {view.send ? "ບໍ່ມີບິນໃນສະຖານະນີ້" : "ບໍ່ມີບິນໃນຊ່ວງວັນທີນີ້"}
           </p>
         ) : null}
 
@@ -434,21 +545,21 @@ export function BillsTable({
                 ຕໍ່ໜ້າ:
                 <span className="inline-flex overflow-hidden rounded border border-zinc-300">
                   {PER_PAGE.map((n) => (
-                    <Link
+                    <button
                       key={n}
-                      href={href(1, send, n)}
-                      aria-current={n === limit ? "true" : undefined}
+                      onClick={() => show({ limit: n, page: 1 })}
+                      aria-pressed={n === limit}
                       className={`grid h-8 min-w-10 place-items-center border-l border-zinc-300 px-2 tabular-nums first:border-l-0 ${
                         n === limit ? "bg-hal text-white" : "bg-white text-zinc-700 hover:bg-hal-soft hover:text-hal"
                       }`}
                     >
                       {n}
-                    </Link>
+                    </button>
                   ))}
                 </span>
               </span>
             </div>
-            {lastPage > 1 && <Pager page={page} lastPage={lastPage} href={href} />}
+            {lastPage > 1 && <Pager page={page} lastPage={lastPage} go={(p) => show({ page: p })} />}
           </div>
         )}
       </section>
@@ -457,6 +568,8 @@ export function BillsTable({
       <dialog
         ref={confirmRef}
         onClose={() => setConfirm(null)}
+        // Esc can't close it while the send is on its way.
+        onCancel={(e) => busy && e.preventDefault()}
         className="m-auto w-[min(92vw,30rem)] rounded-lg p-0"
       >
         {confirm && (
@@ -492,15 +605,19 @@ export function BillsTable({
               </>
             )}
             <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirm(null)} className="rounded border border-zinc-300 px-4 py-1.5 text-sm">
+              <button
+                disabled={busy}
+                onClick={() => setConfirm(null)}
+                className="rounded border border-zinc-300 px-4 py-1.5 text-sm disabled:opacity-50"
+              >
                 ຍົກເລີກ
               </button>
               <button
                 disabled={busy}
                 onClick={() => run(confirm)}
-                className="flex items-center gap-2 rounded bg-wa px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                className="flex min-w-32 items-center justify-center gap-2 rounded bg-wa px-4 py-1.5 text-sm font-medium text-white disabled:opacity-80"
               >
-                <WaIcon className="size-4" /> {busy ? "ກຳລັງສົ່ງ…" : "ຢືນຢັນສົ່ງ"}
+                {busy ? <Spinner /> : <WaIcon className="size-4" />} {busy ? "ກຳລັງສົ່ງ…" : "ຢືນຢັນສົ່ງ"}
               </button>
             </div>
           </div>
@@ -632,15 +749,7 @@ function StateBadge({
   return <span className={`${pill} bg-zinc-100 text-zinc-500`}>ຍັງບໍ່ສົ່ງ</span>;
 }
 
-function Pager({
-  page,
-  lastPage,
-  href,
-}: {
-  page: number;
-  lastPage: number;
-  href: (p: number) => { pathname: string; query: Record<string, string | number> };
-}) {
+function Pager({ page, lastPage, go }: { page: number; lastPage: number; go: (p: number) => void }) {
   // First, last, and two either side of the current page.
   const pages = [...new Set([1, lastPage, page - 2, page - 1, page, page + 1, page + 2])]
     .filter((p) => p >= 1 && p <= lastPage)
@@ -649,19 +758,28 @@ function Pager({
   const cls = "grid h-8 min-w-8 place-items-center rounded border px-2 text-sm";
   return (
     <nav className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
-      {page > 1 && <Link href={href(page - 1)} className={`${cls} border-zinc-300`}>‹</Link>}
+      {page > 1 && (
+        <button onClick={() => go(page - 1)} aria-label="ໜ້າກ່ອນ" className={`${cls} border-zinc-300 hover:border-hal hover:text-hal`}>
+          ‹
+        </button>
+      )}
       {pages.map((p, i) => (
         <span key={p} className="flex items-center gap-1.5">
           {i > 0 && p - pages[i - 1] > 1 && <span className="text-zinc-400">…</span>}
-          <Link
-            href={href(p)}
+          <button
+            onClick={() => go(p)}
+            aria-current={p === page ? "page" : undefined}
             className={`${cls} ${p === page ? "border-hal bg-hal text-white" : "border-zinc-300 hover:border-hal hover:text-hal"}`}
           >
             {p}
-          </Link>
+          </button>
         </span>
       ))}
-      {page < lastPage && <Link href={href(page + 1)} className={`${cls} border-zinc-300`}>›</Link>}
+      {page < lastPage && (
+        <button onClick={() => go(page + 1)} aria-label="ໜ້າຖັດໄປ" className={`${cls} border-zinc-300 hover:border-hal hover:text-hal`}>
+          ›
+        </button>
+      )}
     </nav>
   );
 }

@@ -106,6 +106,9 @@ export const openwa = {
   startSession: (id: string) =>
     call<unknown>(`/api/sessions/${enc(id)}/start`, { method: "POST" }),
 
+  stopSession: (id: string) =>
+    call<unknown>(`/api/sessions/${enc(id)}/stop`, { method: "POST" }),
+
   logout: (id: string) =>
     call<unknown>(`/api/sessions/${enc(id)}/logout`, { method: "POST" }),
 

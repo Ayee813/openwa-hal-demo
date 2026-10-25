@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { SEND_STATES, sendState, type Bill, type LatestMessage, type SendState } from "@/lib/bill";
-import { loadBills } from "@/lib/bills-source";
+import { SEND_STATES, type Bill, type SendState } from "@/lib/bill";
+import { loadBillsForPage } from "@/lib/bills-source";
 import { laosDatePlus } from "@/lib/message";
 import { latestMessages } from "@/lib/notify";
 import { redirectIfSignedOut, requireBranch } from "@/lib/session";
@@ -57,58 +57,32 @@ async function Bills({ searchParams }: Pick<PageProps<"/bills">, "searchParams">
   const limit = LIMITS.includes(Number(params.limit)) ? Number(params.limit) : 20;
   const page = Math.max(1, Number(one(params.page)) || 1);
 
-  const query = { branchId: session.branchId, ...filter };
-
-  let bills: Bill[] = [];
-  let statuses: Record<string, LatestMessage> = {};
-  const counts = Object.fromEntries(SEND_STATES.map((s) => [s.key, 0])) as Record<SendState, number>;
-  let found = 0;
-  let total = 0;
-  let truncated = false;
-  let error: string | null = null;
   const db = createAdminClient();
-
-  try {
-    // HAL has no text search or "sent" flag: read the whole range, then
-    // search, count and filter here.
-    const all = await loadBills(session, query, 1000);
-    truncated = all.truncated;
-    const matched = q ? all.bills.filter((b) => matches(b, q)) : all.bills;
-    found = matched.length;
-
-    const latest = await latestMessages(branch.id, matched.map((b) => b.billNumber), db);
-    const shown = matched.filter((b) => {
-      const { state } = sendState(b, latest[b.billNumber]);
-      counts[state]++;
-      return !send || state === send;
-    });
-
-    total = shown.length;
-    bills = shown.slice((page - 1) * limit, page * limit);
-    statuses = Object.fromEntries(
-      bills.filter((b) => latest[b.billNumber]).map((b) => [b.billNumber, latest[b.billNumber]]),
-    );
-  } catch (e) {
-    redirectIfSignedOut(e);
-    error = (e as Error).message;
-  }
-
-  const template = await arrivalTemplate(branch, db);
+  // HAL has no text search or "sent" flag: read the whole range and search it
+  // here. Tabs and pages are then switched in the browser, with no reload.
+  const [loaded, template] = await Promise.all([
+    loadBillsForPage(session, { branchId: session.branchId, ...filter }, 1000).catch((e: unknown) => {
+      redirectIfSignedOut(e);
+      return { error: (e as Error).message };
+    }),
+    arrivalTemplate(branch, db),
+  ]);
+  const error = "error" in loaded ? loaded.error : null;
+  const bills: Bill[] = "bills" in loaded ? (q ? loaded.bills.filter((b) => matches(b, q)) : loaded.bills) : [];
+  const truncated = "truncated" in loaded && loaded.truncated;
+  const statuses = await latestMessages(branch.id, bills.map((b) => b.billNumber), db);
 
   return (
     <BillsTable
-      key={JSON.stringify({ filter, q, send, page, limit })}
+      // Only a new search remounts the table; tab, page and per-page are its own state.
+      key={JSON.stringify({ filter, q })}
       bills={bills}
       initialStatuses={statuses}
       filter={filter}
       q={q}
-      send={send}
-      counts={counts}
-      found={found}
-      page={page}
-      limit={limit}
-      lastPage={Math.max(1, Math.ceil(total / limit))}
-      total={total}
+      initialSend={send}
+      initialPage={page}
+      initialLimit={limit}
       truncated={truncated}
       error={error}
       template={template.body}
@@ -126,11 +100,42 @@ async function Bills({ searchParams }: Pick<PageProps<"/bills">, "searchParams">
   );
 }
 
+/** Shaped like the real page, so the first load doesn't jump. */
 function Skeleton() {
+  const bar = "animate-pulse rounded bg-zinc-200/70";
   return (
-    <div className="flex flex-col gap-4">
-      <div className="h-36 animate-pulse rounded-lg bg-white" />
-      <div className="h-96 animate-pulse rounded-lg bg-white" />
+    <div className="flex flex-col gap-4" aria-busy="true" aria-label="ກຳລັງໂຫຼດບິນ">
+      <div className="flex flex-col gap-4 rounded-lg bg-white px-5 py-4">
+        <div className={`${bar} h-6 w-64`} />
+        <div className="grid gap-3 md:grid-cols-[2fr_1.3fr_1.3fr_1fr_0.7fr_auto_auto]">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex flex-col gap-1.5">
+              <div className={`${bar} h-3.5 w-16`} />
+              <div className={`${bar} h-9`} />
+            </div>
+          ))}
+          <div className={`${bar} h-9 self-end md:w-28`} />
+          <div className={`${bar} h-9 self-end md:w-24`} />
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="h-9 w-24 animate-pulse rounded-full bg-white" />
+        ))}
+      </div>
+      <div className="overflow-hidden rounded-lg bg-white">
+        <div className="h-14 border-b border-line bg-head" />
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="flex items-center gap-6 border-b border-line px-4 py-5">
+            <div className={`${bar} size-4`} />
+            <div className={`${bar} h-4 w-6`} />
+            <div className={`${bar} h-4 w-28`} />
+            <div className={`${bar} h-4 w-24`} />
+            <div className={`${bar} hidden h-4 w-32 md:block`} />
+            <div className={`${bar} hidden h-4 flex-1 lg:block`} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

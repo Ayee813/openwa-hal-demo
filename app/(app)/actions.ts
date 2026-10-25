@@ -67,11 +67,11 @@ export async function sendBills(input: z.input<typeof request>): Promise<QueueRe
   return queueBills(session, branch, chosen, { resend });
 }
 
-/** Latest WhatsApp status of the bills on screen; polled while messages are in flight. */
+/** Latest WhatsApp status of the given bills; polled while messages are in flight. */
 export async function billStatuses(
   billNumbers: string[],
 ): Promise<Record<string, LatestMessage>> {
-  const numbers = z.array(z.string().max(60)).max(100).safeParse(billNumbers);
+  const numbers = z.array(z.string().max(60)).max(1000).safeParse(billNumbers);
   if (!numbers.success) return {};
   const { branch } = await requireBranch();
   const db = createAdminClient();

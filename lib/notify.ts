@@ -183,7 +183,7 @@ export async function queueBills(
 
   const jobs = inserted.filter((l) => l.status === "queued" && l.chat_id);
   result.queued = jobs.length;
-  after(() => deliver(db, sessionId, jobs));
+  after(() => deliver(db, sessionId, jobs, branch.wa_phone));
   return result;
 }
 
@@ -191,35 +191,123 @@ type Job = { id: number; chat_id: string | null; body: string };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function deliver(db: Db, sessionId: string, jobs: Job[]) {
-  for (const [i, job] of jobs.entries()) {
+/** Gateway calls that fail this many times in a row end the batch. */
+const MAX_FAILS_IN_A_ROW = 3;
+
+/** A 5xx from OpenWA: the gateway or its browser is broken, not the number. */
+function gatewayDown(e: unknown): boolean {
+  return e instanceof OpenWAError && e.status >= 500;
+}
+
+/**
+ * Whether the session can really reach WhatsApp. After its Chrome crashes,
+ * OpenWA can report the session "ready" while WhatsApp Web inside never
+ * reconnected, and every call fails with a 500 ("sendIq called before
+ * startComms"). Looking up the branch's own number shows that cheaply.
+ */
+async function sessionWorks(sessionId: string, ownPhone: string | null): Promise<boolean> {
+  if (!ownPhone) return true;
+  try {
+    await openwa.checkNumber(sessionId, ownPhone.replace(/\D/g, ""));
+    return true;
+  } catch (e) {
+    if (gatewayDown(e)) return false;
+    throw e;
+  }
+}
+
+/**
+ * Stops and starts the session, which relaunches its browser with the saved
+ * login (no new QR), and waits up to ~90 s for it to be ready again.
+ */
+export async function restartSession(sessionId: string): Promise<boolean> {
+  await openwa.stopSession(sessionId).catch(() => undefined);
+  await openwa.startSession(sessionId).catch(() => undefined);
+  for (let i = 0; i < 30; i++) {
+    await sleep(3000);
+    const s = await openwa.getSession(sessionId).catch(() => null);
+    if (s?.status === "ready") {
+      await sleep(3000); // WhatsApp Web finishes connecting just after "ready"
+      return true;
+    }
+    if (s && ["qr_ready", "failed", "action_required", "disconnected"].includes(s.status)) return false;
+  }
+  return false;
+}
+
+async function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null) {
+  let restarted = false;
+  let failsInARow = 0;
+
+  // Repair a session that only looks ready before sending anything.
+  if (!(await sessionWorks(sessionId, ownPhone).catch(() => true))) {
+    restarted = true;
+    if (!(await restartSession(sessionId))) return giveBack(db, jobs, 0);
+  }
+
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i]!;
     if (i > 0) await sleep(3000 + Math.random() * 3000);
 
     let status: MessageStatus;
     let patch: { chat_id?: string; wa_message_id?: string; error?: string | null } = {};
 
     try {
-      const msisdn = job.chat_id!.replace(/@.*/, "");
-      const check = await openwa.checkNumber(sessionId, msisdn);
-      if (!check.exists) {
-        status = "no_whatsapp";
-        patch = { error: "ເບີນີ້ບໍ່ມີ WhatsApp" };
-      } else {
-        const chatId = check.whatsappId ?? job.chat_id!;
-        const sent = await openwa.sendText(sessionId, chatId, job.body);
-        status = "sent";
-        patch = { chat_id: chatId, wa_message_id: sent.messageId, error: null };
-      }
+      ({ status, patch } = await sendOne(sessionId, job));
+      failsInARow = 0;
     } catch (e) {
+      // The first time the gateway breaks mid-batch, restart it and retry this bill once.
+      if (gatewayDown(e) && !restarted) {
+        restarted = true;
+        if (await restartSession(sessionId)) {
+          i--;
+          continue;
+        }
+        return giveBack(db, jobs, i);
+      }
       status = "failed";
       patch = { error: e instanceof Error ? e.message.slice(0, 500) : String(e) };
+      if (gatewayDown(e) && ++failsInARow >= MAX_FAILS_IN_A_ROW) {
+        await setStatus(db, job.id, status, patch);
+        return giveBack(db, jobs, i + 1);
+      }
     }
 
-    await db
-      .from("message_logs")
-      .update({ status, ...patch, updated_at: new Date().toISOString() })
-      .eq("id", job.id);
+    await setStatus(db, job.id, status, patch);
   }
+}
+
+async function sendOne(
+  sessionId: string,
+  job: Job,
+): Promise<{ status: MessageStatus; patch: { chat_id?: string; wa_message_id?: string; error?: string | null } }> {
+  const msisdn = job.chat_id!.replace(/@.*/, "");
+  const check = await openwa.checkNumber(sessionId, msisdn);
+  if (!check.exists) return { status: "no_whatsapp", patch: { error: "ເບີນີ້ບໍ່ມີ WhatsApp" } };
+  const chatId = check.whatsappId ?? job.chat_id!;
+  const sent = await openwa.sendText(sessionId, chatId, job.body);
+  return { status: "sent", patch: { chat_id: chatId, wa_message_id: sent.messageId, error: null } };
+}
+
+function setStatus(
+  db: Db,
+  id: number,
+  status: MessageStatus,
+  patch: { chat_id?: string; wa_message_id?: string; error?: string | null },
+) {
+  return db
+    .from("message_logs")
+    .update({ status, ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+}
+
+/**
+ * The gateway can't send: drop the queued rows from `from` on, so those bills
+ * go back to "not sent" instead of piling up as failures.
+ */
+async function giveBack(db: Db, jobs: Job[], from: number) {
+  const ids = jobs.slice(from).map((j) => j.id);
+  if (ids.length) await db.from("message_logs").delete().in("id", ids).eq("status", "queued");
 }
 
 /**
@@ -241,21 +329,28 @@ export async function syncStatuses(branch: Branch, db: Db = createAdminClient())
     .order("created_at", { ascending: false })
     .limit(25);
 
+  const sessionId = branch.wa_session_id;
   let changed = 0;
-  for (const log of logs ?? []) {
-    const remote = await openwa
-      .messageStatus(branch.wa_session_id, log.chat_id!, log.wa_message_id!)
-      .catch(() => null);
+  // A few at a time: quicker than one by one, without crowding the gateway's browser.
+  const rows = logs ?? [];
+  for (let i = 0; i < rows.length; i += 5) {
+    await Promise.all(
+      rows.slice(i, i + 5).map(async (log) => {
+        const remote = await openwa
+          .messageStatus(sessionId, log.chat_id!, log.wa_message_id!)
+          .catch(() => null);
 
-    const next: MessageStatus | null =
-      remote === "read" || remote === "delivered" || remote === "failed" ? remote : null;
-    if (!next || next === log.status) continue;
+        const next: MessageStatus | null =
+          remote === "read" || remote === "delivered" || remote === "failed" ? remote : null;
+        if (!next || next === log.status) return;
 
-    changed++;
-    await db
-      .from("message_logs")
-      .update({ status: next, updated_at: new Date().toISOString() })
-      .eq("id", log.id);
+        changed++;
+        await db
+          .from("message_logs")
+          .update({ status: next, updated_at: new Date().toISOString() })
+          .eq("id", log.id);
+      }),
+    );
   }
   return changed;
 }

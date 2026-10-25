@@ -169,14 +169,24 @@ export async function holdingAll(
   q: Omit<HoldingQuery, "page" | "limit">,
   max = 1000,
 ): Promise<{ bills: Bill[]; truncated: boolean }> {
-  const bills: Bill[] = [];
-  for (let page = 1; ; page++) {
-    const res = await holdingPage(token, { ...q, page, limit: 50 });
-    bills.push(...res.bills);
-    if (bills.length >= max) return { bills: bills.slice(0, max), truncated: true };
-    if (page >= res.lastPage || res.bills.length === 0) return { bills, truncated: false };
+  const limit = 50;
+  // Page 1 says how many pages there are; the rest load a few at a time.
+  const first = await holdingPage(token, { ...q, page: 1, limit });
+  const lastPage = Math.min(first.lastPage, Math.ceil((max + 1) / limit));
+  const pages: Bill[][] = [first.bills];
+  for (let p = 2; p <= lastPage; p += PARALLEL_PAGES) {
+    const batch = Array.from({ length: Math.min(PARALLEL_PAGES, lastPage - p + 1) }, (_, i) =>
+      holdingPage(token, { ...q, page: p + i, limit }).then((r) => r.bills),
+    );
+    pages.push(...(await Promise.all(batch)));
   }
+
+  const bills = pages.flat();
+  return bills.length > max ? { bills: bills.slice(0, max), truncated: true } : { bills, truncated: false };
 }
+
+/** HAL pages fetched at once; kept small so one page load doesn't flood HAL. */
+const PARALLEL_PAGES = 4;
 
 function num(v: unknown): number | null {
   const n = typeof v === "string" ? Number(v) : v;

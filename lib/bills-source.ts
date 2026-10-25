@@ -31,3 +31,35 @@ export async function loadBills(
 
   return { bills: data.slice(0, max).map(demoRowToBill), truncated: data.length > max };
 }
+
+type Loaded = Awaited<ReturnType<typeof loadBills>>;
+
+/** How long the bills page reuses a HAL read. Sending always reads fresh. */
+const TTL_MS = 30_000;
+const recent = new Map<string, { at: number; result: Promise<Loaded> }>();
+
+/**
+ * `loadBills` for the bills page: the same branch and date range within 30 s
+ * (a refresh, a search, back after sending) reuse one HAL read, and two loads
+ * at once share the request. Demo bills skip it so generated ones show at once.
+ */
+export function loadBillsForPage(
+  session: Session,
+  q: Omit<HoldingQuery, "page" | "limit">,
+  max = 1000,
+): Promise<Loaded> {
+  if (session.demo) return loadBills(session, q, max);
+
+  const now = Date.now();
+  for (const [k, v] of recent) if (now - v.at > TTL_MS) recent.delete(k);
+
+  const key = JSON.stringify([session.branchId, q.startDate, q.endDate, q.status, max]);
+  const hit = recent.get(key);
+  if (hit) return hit.result;
+
+  const result = loadBills(session, q, max);
+  recent.set(key, { at: now, result });
+  // A failed read isn't kept, so the next load tries HAL again.
+  result.catch(() => recent.delete(key));
+  return result;
+}
