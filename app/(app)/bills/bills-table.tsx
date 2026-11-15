@@ -222,7 +222,7 @@ export function BillsTable({
         ].filter(Boolean);
         setNotice({
           tone: "ok",
-          text: `ເຂົ້າຄິວສົ່ງ ${res.queued} ຂໍ້ຄວາມ${extra.length ? ` · ${extra.join(" · ")}` : ""}. ລະບົບສົ່ງເທື່ອລະຂໍ້ຄວາມ ຫ່າງກັນ 3–6 ວິນາທີ.`,
+          text: `ເຂົ້າຄິວສົ່ງ ${res.queued} ຂໍ້ຄວາມ${extra.length ? ` · ${extra.join(" · ")}` : ""}. ລະບົບສົ່ງເທື່ອລະຂໍ້ຄວາມ ຫ່າງກັນ 10–40 ວິນາທີ ແລະ ພັກເປັນໄລຍະ ເພື່ອບໍ່ໃຫ້ WhatsApp ບລັອກເບີ, ອາດໃຊ້ເວລາຫຼາຍນາທີ.`,
         });
         setSelected(new Set());
       }

@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { SENT, billMessage, type Bill, type LatestMessage } from "@/lib/bill";
 import { laosDatePlus } from "@/lib/message";
 import { OpenWAError, openwa } from "@/lib/openwa";
+import { PACING, batchRest, dailyCap, daysActive, hourlyWait, messageDelay } from "@/lib/pacing";
 import { phoneProblem, toChatId, toLaoMsisdn } from "@/lib/phone";
 import type { Session } from "@/lib/session";
 import { arrivalTemplate } from "@/lib/template";
@@ -14,8 +15,8 @@ import type { Branch, MessageStatus } from "@/lib/types";
  * Sending WhatsApp bill notifications for a branch.
  *
  * `queueBills` writes one `message_logs` row per bill (status `queued`) and
- * returns at once; the sending runs after the response with a 3–6 s gap
- * between messages, so the branch number is not flagged for spam.
+ * returns at once; the sending runs after the response, paced by lib/pacing.ts
+ * (a 10–40 s gap, rests, an hourly limit), so the branch number is not flagged for spam.
  *
  * Bills always come from the HAL API on the server (never from the browser),
  * and every query is scoped to the session's branch id. The secret-key client
@@ -100,13 +101,20 @@ export async function queueBills(
   }
 
   const db = createAdminClient();
-  const [template, { count: sentToday }, latest] = await Promise.all([
+  const [template, { count: sentToday }, { data: first }, latest] = await Promise.all([
     arrivalTemplate(branch, db),
     db
       .from("message_logs")
       .select("id", { count: "exact", head: true })
       .eq("branch_id", branch.id)
       .gte("created_at", laosMidnight()),
+    // The branch's first message ever: a number new to the app ramps up slowly.
+    db
+      .from("message_logs")
+      .select("created_at")
+      .eq("branch_id", branch.id)
+      .order("created_at", { ascending: true })
+      .limit(1),
     latestMessages(
       branch.id,
       bills.map((b) => b.billNumber),
@@ -141,11 +149,16 @@ export async function queueBills(
     };
   }
 
-  const left = branch.daily_limit - (sentToday ?? 0);
+  const days = daysActive(first?.[0] ? Date.parse(first[0].created_at) : null, Date.parse(laosMidnight()));
+  const cap = dailyCap(branch.daily_limit, days);
+  const left = cap - (sentToday ?? 0);
   if (todo.length > left) {
+    const ramping = cap < branch.daily_limit;
     return {
       ...result,
-      error: `ເກີນເພດານສົ່ງຕໍ່ວັນ (${branch.daily_limit}). ມື້ນີ້ເຫຼືອ ${Math.max(left, 0)} ຂໍ້ຄວາມ`,
+      error: ramping
+        ? `ເບີ WhatsApp ໃໝ່ ຕ້ອງເພີ່ມຈຳນວນຄ່ອຍໆ ເພື່ອບໍ່ໃຫ້ຖືກບລັອກ: ມື້ນີ້ສົ່ງໄດ້ສູງສຸດ ${cap} ຂໍ້ຄວາມ, ເຫຼືອ ${Math.max(left, 0)}`
+        : `ເກີນເພດານສົ່ງຕໍ່ວັນ (${cap}). ມື້ນີ້ເຫຼືອ ${Math.max(left, 0)} ຂໍ້ຄວາມ`,
     };
   }
 
@@ -191,7 +204,7 @@ type Job = { id: number; chat_id: string | null; body: string };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Gateway calls that fail this many times in a row end the batch. */
+/** This many failures in a row stop the batch (after one long rest unless the gateway is down). */
 const MAX_FAILS_IN_A_ROW = 3;
 
 /** A 5xx from OpenWA: the gateway or its browser is broken, not the number. */
@@ -235,9 +248,44 @@ export async function restartSession(sessionId: string): Promise<boolean> {
   return false;
 }
 
-async function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null) {
+/** Where each WhatsApp number is in its pacing; lives as long as the server process. */
+type Pace = { sentAt: number[]; inBatch: number; lastAt: number; queue: Promise<void> };
+const paces = new Map<string, Pace>();
+
+function paceFor(sessionId: string): Pace {
+  let p = paces.get(sessionId);
+  if (!p) paces.set(sessionId, (p = { sentAt: [], inBatch: 0, lastAt: 0, queue: Promise.resolve() }));
+  return p;
+}
+
+/**
+ * Queues a batch behind any batch already sending from the same number, so two
+ * clicks never send in parallel: the gaps and the hourly limit hold across batches.
+ */
+function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null): Promise<void> {
+  const pace = paceFor(sessionId);
+  const run = pace.queue.then(() => deliverNow(db, sessionId, jobs, ownPhone, pace));
+  pace.queue = run.catch(() => undefined);
+  return run;
+}
+
+/** Waits before the next message: the usual gap, a rest after a full batch, and the hourly limit. */
+async function pause(pace: Pace) {
+  const now = Date.now();
+  let wait = 0;
+  if (pace.lastAt) wait = Math.max(0, pace.lastAt + messageDelay() - now);
+  if (pace.inBatch >= PACING.batchSize) {
+    wait = Math.max(wait, batchRest());
+    pace.inBatch = 0;
+  }
+  wait = Math.max(wait, hourlyWait(pace.sentAt, now + wait));
+  if (wait > 0) await sleep(wait);
+}
+
+async function deliverNow(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null, pace: Pace) {
   let restarted = false;
   let failsInARow = 0;
+  let cooledDown = false;
 
   // Repair a session that only looks ready before sending anything.
   if (!(await sessionWorks(sessionId, ownPhone).catch(() => true))) {
@@ -247,7 +295,7 @@ async function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string 
 
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i]!;
-    if (i > 0) await sleep(3000 + Math.random() * 3000);
+    await pause(pace);
 
     let status: MessageStatus;
     let patch: { chat_id?: string; wa_message_id?: string; error?: string | null } = {};
@@ -267,12 +315,24 @@ async function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string 
       }
       status = "failed";
       patch = { error: e instanceof Error ? e.message.slice(0, 500) : String(e) };
-      if (gatewayDown(e) && ++failsInARow >= MAX_FAILS_IN_A_ROW) {
+      if (++failsInARow >= MAX_FAILS_IN_A_ROW) {
         await setStatus(db, job.id, status, patch);
-        return giveBack(db, jobs, i + 1);
+        // A broken gateway won't mend by waiting. Anything else (WhatsApp
+        // refusing us) gets one long rest, then the rest of the batch is given back.
+        if (gatewayDown(e) || cooledDown) return giveBack(db, jobs, i + 1);
+        cooledDown = true;
+        failsInARow = 0;
+        await sleep(PACING.coolDownMs);
+        continue;
       }
     }
 
+    // Only a message that really went to WhatsApp counts toward the pacing.
+    if (status === "sent") {
+      pace.sentAt.push(Date.now());
+      pace.inBatch++;
+    }
+    pace.lastAt = Date.now();
     await setStatus(db, job.id, status, patch);
   }
 }
