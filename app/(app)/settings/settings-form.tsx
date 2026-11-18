@@ -7,7 +7,7 @@ import { updateBranchSettings, type SettingsState } from "../actions";
 export function SettingsForm({
   branch,
 }: {
-  branch: { staff_phone: string; pickup_days: number; daily_limit: number; tel: string | null };
+  branch: { staff_phone: string; pickup_days: number; tel: string | null };
 }) {
   const [state, action, pending] = useActionState<SettingsState, FormData>(updateBranchSettings, {});
 
@@ -49,11 +49,6 @@ export function SettingsForm({
           </span>
           <span className={hint}>ນັບຈາກວັນທີເຄື່ອງຮອດສາຂາ.</span>
         </label>
-
-        <div className="flex items-center justify-between rounded bg-head px-3 py-2 text-sm">
-          <span className="text-zinc-500">ເພດານສົ່ງຕໍ່ວັນ</span>
-          <span className="font-medium tabular-nums">{branch.daily_limit} ຂໍ້ຄວາມ</span>
-        </div>
 
         {state.error && (
           <p role="alert" className={alert.error}>

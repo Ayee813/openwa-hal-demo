@@ -8,6 +8,7 @@ import type { LatestMessage } from "@/lib/bill";
 import { latestMessages, queueBills, syncStatuses, type QueueResult } from "@/lib/notify";
 import { OpenWAError, branchSessionName, openwa, type SessionStatus } from "@/lib/openwa";
 import { PLACEHOLDERS } from "@/lib/message";
+import { parsePacing, storedPacing } from "@/lib/pacing";
 import { toLaoMsisdn } from "@/lib/phone";
 import { redirectIfSignedOut, requireBranch } from "@/lib/session";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -269,6 +270,36 @@ export async function updateBranchSettings(
 
   revalidatePath("/", "layout");
   return { ok: "ບັນທຶກແລ້ວ" };
+}
+
+// ---------------------------------------------------------------------------
+// Sending pace
+// ---------------------------------------------------------------------------
+
+const PACING_FIELDS = ["delayMin", "delayMax", "batchSize", "restMin", "restMax", "hourlyLimit", "dailyLimit"] as const;
+
+/**
+ * Saves the signed-in branch's own sending pace. The branch comes from the
+ * session, never the form, and every number is checked against the fixed
+ * bounds in lib/pacing.ts, so no setting can switch the protection off.
+ * It applies from the next batch; one already sending keeps its pace.
+ */
+export async function updatePacing(_prev: SettingsState, formData: FormData): Promise<SettingsState> {
+  const { branch } = await requireBranch();
+  const parsed = parsePacing({
+    ...Object.fromEntries(PACING_FIELDS.map((k) => [k, formData.get(k)])),
+    rampUp: formData.get("rampUp") === "on",
+  });
+  if (!parsed.ok) return { error: parsed.error };
+
+  const { error } = await createAdminClient()
+    .from("branches")
+    .update({ pacing: storedPacing(parsed.value), daily_limit: parsed.value.dailyLimit })
+    .eq("id", branch.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/", "layout");
+  return { ok: "ບັນທຶກແລ້ວ, ໃຊ້ກັບການສົ່ງຄັ້ງຕໍ່ໄປ" };
 }
 
 // ---------------------------------------------------------------------------

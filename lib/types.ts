@@ -36,6 +36,8 @@ export type Branch = {
   wa_updated_at: string | null;
   /** The branch's own arrival message; null uses the shared template. */
   arrival_template: string | null;
+  /** Sending pace (lib/pacing.ts) without the daily limit; null is the standard pace. */
+  pacing: Record<string, unknown> | null;
   created_at: string;
 };
 

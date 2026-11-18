@@ -4,7 +4,16 @@ import { after } from "next/server";
 import { SENT, billMessage, type Bill, type LatestMessage } from "@/lib/bill";
 import { laosDatePlus } from "@/lib/message";
 import { OpenWAError, openwa } from "@/lib/openwa";
-import { PACING, batchRest, dailyCap, daysActive, hourlyWait, messageDelay } from "@/lib/pacing";
+import {
+  COOL_DOWN_MS,
+  batchRest,
+  dailyCap,
+  daysActive,
+  hourlyWait,
+  messageDelay,
+  resolvePacing,
+  type PacingConfig,
+} from "@/lib/pacing";
 import { phoneProblem, toChatId, toLaoMsisdn } from "@/lib/phone";
 import type { Session } from "@/lib/session";
 import { arrivalTemplate } from "@/lib/template";
@@ -16,7 +25,7 @@ import type { Branch, MessageStatus } from "@/lib/types";
  *
  * `queueBills` writes one `message_logs` row per bill (status `queued`) and
  * returns at once; the sending runs after the response, paced by lib/pacing.ts
- * (a 10–40 s gap, rests, an hourly limit), so the branch number is not flagged for spam.
+ * (the branch's own gaps, rests and hourly limit), so the branch number is not flagged for spam.
  *
  * Bills always come from the HAL API on the server (never from the browser),
  * and every query is scoped to the session's branch id. The secret-key client
@@ -83,6 +92,26 @@ export async function latestMessages(
   return out;
 }
 
+/** Messages the branch queued today, and how many days its number has been in use (0 = the first day). */
+export async function usageToday(branchId: number, db: Db = createAdminClient()) {
+  const [{ count }, { data: first }] = await Promise.all([
+    db
+      .from("message_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("branch_id", branchId)
+      .gte("created_at", laosMidnight()),
+    // The branch's first message ever: a number new to the app ramps up slowly.
+    db
+      .from("message_logs")
+      .select("created_at")
+      .eq("branch_id", branchId)
+      .order("created_at", { ascending: true })
+      .limit(1),
+  ]);
+  const firstAt = first?.[0] ? Date.parse(first[0].created_at) : null;
+  return { sentToday: count ?? 0, days: daysActive(firstAt, Date.parse(laosMidnight())) };
+}
+
 export async function queueBills(
   session: Session,
   branch: Branch,
@@ -101,20 +130,9 @@ export async function queueBills(
   }
 
   const db = createAdminClient();
-  const [template, { count: sentToday }, { data: first }, latest] = await Promise.all([
+  const [template, { sentToday, days }, latest] = await Promise.all([
     arrivalTemplate(branch, db),
-    db
-      .from("message_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("branch_id", branch.id)
-      .gte("created_at", laosMidnight()),
-    // The branch's first message ever: a number new to the app ramps up slowly.
-    db
-      .from("message_logs")
-      .select("created_at")
-      .eq("branch_id", branch.id)
-      .order("created_at", { ascending: true })
-      .limit(1),
+    usageToday(branch.id, db),
     latestMessages(
       branch.id,
       bills.map((b) => b.billNumber),
@@ -149,11 +167,11 @@ export async function queueBills(
     };
   }
 
-  const days = daysActive(first?.[0] ? Date.parse(first[0].created_at) : null, Date.parse(laosMidnight()));
-  const cap = dailyCap(branch.daily_limit, days);
-  const left = cap - (sentToday ?? 0);
+  const pacing = resolvePacing(branch.pacing, branch.daily_limit);
+  const cap = dailyCap(pacing, days);
+  const left = cap - sentToday;
   if (todo.length > left) {
-    const ramping = cap < branch.daily_limit;
+    const ramping = cap < pacing.dailyLimit;
     return {
       ...result,
       error: ramping
@@ -196,7 +214,7 @@ export async function queueBills(
 
   const jobs = inserted.filter((l) => l.status === "queued" && l.chat_id);
   result.queued = jobs.length;
-  after(() => deliver(db, sessionId, jobs, branch.wa_phone));
+  after(() => deliver(db, sessionId, jobs, branch.wa_phone, pacing));
   return result;
 }
 
@@ -262,27 +280,34 @@ function paceFor(sessionId: string): Pace {
  * Queues a batch behind any batch already sending from the same number, so two
  * clicks never send in parallel: the gaps and the hourly limit hold across batches.
  */
-function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null): Promise<void> {
+function deliver(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null, cfg: PacingConfig): Promise<void> {
   const pace = paceFor(sessionId);
-  const run = pace.queue.then(() => deliverNow(db, sessionId, jobs, ownPhone, pace));
+  const run = pace.queue.then(() => deliverNow(db, sessionId, jobs, ownPhone, pace, cfg));
   pace.queue = run.catch(() => undefined);
   return run;
 }
 
 /** Waits before the next message: the usual gap, a rest after a full batch, and the hourly limit. */
-async function pause(pace: Pace) {
+async function pause(pace: Pace, cfg: PacingConfig) {
   const now = Date.now();
   let wait = 0;
-  if (pace.lastAt) wait = Math.max(0, pace.lastAt + messageDelay() - now);
-  if (pace.inBatch >= PACING.batchSize) {
-    wait = Math.max(wait, batchRest());
+  if (pace.lastAt) wait = Math.max(0, pace.lastAt + messageDelay(cfg) - now);
+  if (pace.inBatch >= cfg.batchSize) {
+    wait = Math.max(wait, batchRest(cfg));
     pace.inBatch = 0;
   }
-  wait = Math.max(wait, hourlyWait(pace.sentAt, now + wait));
+  wait = Math.max(wait, hourlyWait(pace.sentAt, now + wait, cfg.hourlyLimit));
   if (wait > 0) await sleep(wait);
 }
 
-async function deliverNow(db: Db, sessionId: string, jobs: Job[], ownPhone: string | null, pace: Pace) {
+async function deliverNow(
+  db: Db,
+  sessionId: string,
+  jobs: Job[],
+  ownPhone: string | null,
+  pace: Pace,
+  cfg: PacingConfig,
+) {
   let restarted = false;
   let failsInARow = 0;
   let cooledDown = false;
@@ -295,7 +320,7 @@ async function deliverNow(db: Db, sessionId: string, jobs: Job[], ownPhone: stri
 
   for (let i = 0; i < jobs.length; i++) {
     const job = jobs[i]!;
-    await pause(pace);
+    await pause(pace, cfg);
 
     let status: MessageStatus;
     let patch: { chat_id?: string; wa_message_id?: string; error?: string | null } = {};
@@ -322,7 +347,7 @@ async function deliverNow(db: Db, sessionId: string, jobs: Job[], ownPhone: stri
         if (gatewayDown(e) || cooledDown) return giveBack(db, jobs, i + 1);
         cooledDown = true;
         failsInARow = 0;
-        await sleep(PACING.coolDownMs);
+        await sleep(COOL_DOWN_MS);
         continue;
       }
     }

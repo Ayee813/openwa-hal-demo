@@ -23,7 +23,7 @@ Supabase ເກັບສະເພາະຂໍ້ມູນຂອງລະບົ�
 ກັນສົ່ງຊ້ຳ), `message_templates`.
 
 ການສົ່ງ (`lib/notify.ts`): server ດຶງບິນຈາກ HAL ຄືນໃໝ່ດ້ວຍ token ຂອງຜູ້ໃຊ້ (browser ສົ່ງໄດ້ແຕ່
-ເລກບິນ, ບໍ່ແມ່ນເບີ ຫຼື ຂໍ້ຄວາມ) → ບັນທຶກ `queued` → ສົ່ງເທື່ອລະຂໍ້ຄວາມ ຫ່າງກັນ 10–40 ວິນາທີ (ພັກ 2–5 ນາທີ ທຸກໆ 20 ຂໍ້ຄວາມ, ສູງສຸດ 40 ຕໍ່ຊົ່ວໂມງ — ເບິ່ງ `lib/pacing.ts`)
+ເລກບິນ, ບໍ່ແມ່ນເບີ ຫຼື ຂໍ້ຄວາມ) → ບັນທຶກ `queued` → ສົ່ງເທື່ອລະຂໍ້ຄວາມ ຕາມຄວາມໄວທີ່ແຕ່ລະສາຂາຕັ້ງໄວ້ໃນໜ້າ WhatsApp (ມາດຕະຖານ: ຫ່າງ 10–40 ວິນາທີ, ພັກ 2–5 ນາທີ ທຸກໆ 20 ຂໍ້ຄວາມ, ສູງສຸດ 40 ຕໍ່ຊົ່ວໂມງ, 100 ຕໍ່ວັນ — ເບິ່ງ `lib/pacing.ts`)
 → `sent` / `no_whatsapp` / `failed`, ແລ້ວ poll OpenWA ເພື່ອ `delivered` / `read`.
 ມີເພດານຕໍ່ວັນຕໍ່ສາຂາ.
 
@@ -44,7 +44,7 @@ lib/phone.ts              Lao phone → WhatsApp id (97364057 → 8562097364057@
 lib/bills-source.ts       bills from HAL, or from demo_bills for the dev account
 lib/demo.ts               mock bill generator of the dev account
 lib/supabase/admin.ts     secret-key client (server-only)
-supabase/migrations/      0001–0009 (0006 drops the first version's auth + demo tables, 0007 adds demo_bills, 0008 per-branch message, 0009 daily limit 100)
+supabase/migrations/      0001–0010 (0006 drops the first version's auth + demo tables, 0007 adds demo_bills, 0008 per-branch message, 0009 daily limit 100, 0010 per-branch pacing)
 public/hal-logo.png       HAL Express logo
 ```
 
